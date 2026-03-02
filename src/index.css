@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-netflix-border;
+  }
+
+  body {
+    @apply bg-netflix-bg text-gray-100 font-sans;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  select {
+    @apply text-white;
+  }
+
+  select option {
+    @apply bg-netflix-panel text-white;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-primary-600 hover:bg-primary-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200 shadow-lg hover:shadow-xl;
+  }
+
+  .btn-secondary {
+    @apply bg-netflix-card text-primary-400 border border-primary-600 hover:bg-primary-600 hover:text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200;
+  }
+
+  .card {
+    @apply bg-netflix-card rounded-xl border border-netflix-border shadow-lg transition-all duration-200;
+  }
+
+  .gradient-bg {
+    @apply bg-netflix-bg;
+  }
+
+  .text-gradient {
+    @apply text-primary-500;
+  }
+
+  .glass-effect {
+    @apply bg-white/5 backdrop-blur-md border border-white/10;
+  }
+}
+
+@layer utilities {
+  .animation-delay-200 {
+    animation-delay: 200ms;
+  }
+
+  .animation-delay-400 {
+    animation-delay: 400ms;
+  }
+
+  .animation-delay-600 {
+    animation-delay: 600ms;
+  }
+}

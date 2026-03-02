@@ -1,0 +1,10 @@
+{
+  "buildCommand": "npm run db:generate && npm run build:api && npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index" }
+  ],
+  "env": {
+    "NODE_VERSION": "20"
+  }
+}
