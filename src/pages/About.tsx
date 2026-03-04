@@ -4,9 +4,6 @@ import {
   Eye, 
   Heart, 
   Users, 
-  Award, 
-  TrendingUp, 
-  Globe, 
   Shield,
   Zap,
   Headphones

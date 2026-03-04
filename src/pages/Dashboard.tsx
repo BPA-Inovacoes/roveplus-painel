@@ -282,7 +282,7 @@ export default function Dashboard() {
                       color: '#f3f4f6',
                     }}
                     labelStyle={{ color: '#9ca3af' }}
-                    formatter={(value: number) => [`${Number(value).toFixed(2)} kz`, 'Receita no mês']}
+                    formatter={((value: number | undefined) => [`${Number(value ?? 0).toFixed(2)} kz`, 'Receita no mês']) as any}
                   />
                   <Area
                     type="monotone"
@@ -329,7 +329,7 @@ export default function Dashboard() {
                       borderRadius: '8px',
                       color: '#f3f4f6',
                     }}
-                    formatter={(value: number) => [value, 'Clientes']}
+                    formatter={((value: number | undefined) => [value ?? 0, 'Clientes']) as any}
                   />
                   <Legend
                     wrapperStyle={{ fontSize: '12px' }}
@@ -369,7 +369,7 @@ export default function Dashboard() {
                       borderRadius: '8px',
                       color: '#f3f4f6',
                     }}
-                    formatter={(value: number) => [value, 'Clientes']}
+                    formatter={((value: number | undefined) => [value ?? 0, 'Clientes']) as any}
                   />
                   <Bar dataKey="clientes" fill={CHART_COLORS.primary} radius={[0, 4, 4, 0]} />
                 </BarChart>

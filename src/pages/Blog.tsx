@@ -3,12 +3,10 @@ import { useState } from 'react'
 import { 
   Calendar, 
   User, 
-  Tag, 
   ArrowRight, 
   Search,
   Filter,
-  Clock,
-  Eye
+  Clock
 } from 'lucide-react'
 import { blogPosts } from '../utils/data'
 

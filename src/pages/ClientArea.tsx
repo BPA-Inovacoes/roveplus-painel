@@ -6,7 +6,6 @@ import {
   Eye, 
   EyeOff, 
   CreditCard, 
-  Calendar, 
   Wifi, 
   Settings,
   Download,

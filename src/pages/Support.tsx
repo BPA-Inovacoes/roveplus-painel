@@ -9,7 +9,6 @@ import {
   ChevronUp,
   Headphones,
   Zap,
-  Shield,
   Users
 } from 'lucide-react'
 import { faqs, contactInfo } from '../utils/data'

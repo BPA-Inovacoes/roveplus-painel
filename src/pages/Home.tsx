@@ -8,7 +8,6 @@ import {
   Headphones, 
   Zap, 
   Shield, 
-  Star,
   ArrowRight,
   CheckCircle
 } from 'lucide-react'
