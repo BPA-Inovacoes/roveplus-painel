@@ -14,27 +14,25 @@ router.post('/login', async (req, res) => {
     return res.status(400).json({ error: 'Email e senha obrigatórios' })
   }
   try {
-    await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT \'ativo\'').catch(() => {})
-    const user = await prisma.user.findUnique({ where: { email: String(email).trim().toLowerCase() } })
+    const user = await prisma.user.findUnique({
+      where: { email: String(email).trim().toLowerCase() },
+      select: { id: true, nome: true, email: true, role: true, password: true, status: true },
+    })
     if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ error: 'Email ou senha incorretos' })
     }
-    const statusRows = await prisma.$queryRawUnsafe<Array<{ status: string }>>(
-      'SELECT status FROM "User" WHERE id = $1',
-      user.id
-    )
-    const status = statusRows[0]?.status ?? 'ativo'
+    const status = user.status ?? 'ativo'
     if (status === 'suspenso') {
       return res.status(403).json({ error: 'Conta suspensa. Contacte o administrador.' })
     }
     const payload: AuthPayload = { userId: user.id, email: user.email, role: user.role }
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' })
-    res.cookie('token', token, { httpOnly: true, maxAge: COOKIE_MAX_AGE, sameSite: 'lax' })
+    res.cookie('token', token, { httpOnly: true, maxAge: COOKIE_MAX_AGE, sameSite: 'lax', path: '/', secure: process.env.NODE_ENV === 'production' })
     res.json({ user: { id: user.id, nome: user.nome, email: user.email, role: user.role } })
   } catch (err) {
-    console.error('Login DB error:', err)
-    const msg = err instanceof Error ? err.message : ''
-    if (msg.includes('connect') || msg.includes('ECONNREFUSED') || msg.includes('timeout') || msg.includes('Connection')) {
+    console.error('Login error:', err)
+    const msg = err instanceof Error ? err.message : String(err)
+    if (/connect|ECONNREFUSED|timeout|Connection|P1001|P1002|P1017/i.test(msg)) {
       return res.status(503).json({ error: 'Sem ligação à base de dados. Verifique DATABASE_URL na Vercel.' })
     }
     return res.status(500).json({ error: 'Erro ao iniciar sessão. Tente novamente.' })
