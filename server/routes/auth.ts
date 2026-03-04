@@ -13,23 +13,32 @@ router.post('/login', async (req, res) => {
   if (!email || !password) {
     return res.status(400).json({ error: 'Email e senha obrigatórios' })
   }
-  await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT \'ativo\'').catch(() => {})
-  const user = await prisma.user.findUnique({ where: { email: String(email).trim().toLowerCase() } })
-  if (!user || !(await bcrypt.compare(password, user.password))) {
-    return res.status(401).json({ error: 'Email ou senha incorretos' })
+  try {
+    await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT \'ativo\'').catch(() => {})
+    const user = await prisma.user.findUnique({ where: { email: String(email).trim().toLowerCase() } })
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(401).json({ error: 'Email ou senha incorretos' })
+    }
+    const statusRows = await prisma.$queryRawUnsafe<Array<{ status: string }>>(
+      'SELECT status FROM "User" WHERE id = $1',
+      user.id
+    )
+    const status = statusRows[0]?.status ?? 'ativo'
+    if (status === 'suspenso') {
+      return res.status(403).json({ error: 'Conta suspensa. Contacte o administrador.' })
+    }
+    const payload: AuthPayload = { userId: user.id, email: user.email, role: user.role }
+    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' })
+    res.cookie('token', token, { httpOnly: true, maxAge: COOKIE_MAX_AGE, sameSite: 'lax' })
+    res.json({ user: { id: user.id, nome: user.nome, email: user.email, role: user.role } })
+  } catch (err) {
+    console.error('Login DB error:', err)
+    const msg = err instanceof Error ? err.message : ''
+    if (msg.includes('connect') || msg.includes('ECONNREFUSED') || msg.includes('timeout') || msg.includes('Connection')) {
+      return res.status(503).json({ error: 'Sem ligação à base de dados. Verifique DATABASE_URL na Vercel.' })
+    }
+    return res.status(500).json({ error: 'Erro ao iniciar sessão. Tente novamente.' })
   }
-  const statusRows = await prisma.$queryRawUnsafe<Array<{ status: string }>>(
-    'SELECT status FROM "User" WHERE id = $1',
-    user.id
-  )
-  const status = statusRows[0]?.status ?? 'ativo'
-  if (status === 'suspenso') {
-    return res.status(403).json({ error: 'Conta suspensa. Contacte o administrador.' })
-  }
-  const payload: AuthPayload = { userId: user.id, email: user.email, role: user.role }
-  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' })
-  res.cookie('token', token, { httpOnly: true, maxAge: COOKIE_MAX_AGE, sameSite: 'lax' })
-  res.json({ user: { id: user.id, nome: user.nome, email: user.email, role: user.role } })
 })
 
 router.post('/logout', (_req, res) => {

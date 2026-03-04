@@ -1,6 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import cookieParser from 'cookie-parser'
+import { prisma } from './lib/prisma.js'
 import authRoutes from './routes/auth.js'
 import dashboardRoutes from './routes/dashboard.js'
 import clientsRoutes from './routes/clients.js'
@@ -29,6 +30,13 @@ app.use('/api/audit', auditRoutes)
 app.use('/api/cron', cronRoutes)
 app.use('/api/users', usersRoutes)
 
-app.get('/api/health', (_req, res) => res.json({ ok: true }))
+app.get('/api/health', async (_req, res) => {
+  try {
+    await prisma.$queryRawUnsafe('SELECT 1')
+    res.json({ ok: true, db: 'connected' })
+  } catch (e) {
+    res.status(503).json({ ok: false, db: 'error', message: e instanceof Error ? e.message : 'Conexão à BD falhou' })
+  }
+})
 
 export default app
