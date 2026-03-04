@@ -16,12 +16,21 @@ router.post('/login', async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { email: String(email).trim().toLowerCase() },
-      select: { id: true, nome: true, email: true, role: true, password: true, status: true },
+      select: { id: true, nome: true, email: true, role: true, password: true },
     })
     if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ error: 'Email ou senha incorretos' })
     }
-    const status = user.status ?? 'ativo'
+    let status = 'ativo'
+    try {
+      const rows = await prisma.$queryRawUnsafe<Array<{ status: string }>>(
+        'SELECT status FROM "User" WHERE id = $1',
+        user.id
+      )
+      status = rows[0]?.status ?? 'ativo'
+    } catch {
+      // coluna status pode não existir na BD; assumir ativo
+    }
     if (status === 'suspenso') {
       return res.status(403).json({ error: 'Conta suspensa. Contacte o administrador.' })
     }
