@@ -19,8 +19,10 @@ async function request<T>(
     throw new Error('Não autorizado')
   }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error((err as { error?: string }).error || res.statusText)
+    const err = await res.json().catch(() => ({ error: res.statusText })) as { error?: string; detail?: string }
+    const message = err.error || res.statusText
+    const full = err.detail ? `${message} (${err.detail})` : message
+    throw new Error(full)
   }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>

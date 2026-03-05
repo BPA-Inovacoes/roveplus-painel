@@ -44,7 +44,10 @@ router.post('/login', async (req, res) => {
     if (/connect|ECONNREFUSED|timeout|Connection|P1001|P1002|P1017/i.test(msg)) {
       return res.status(503).json({ error: 'Sem ligação à base de dados. Verifique DATABASE_URL na Vercel.' })
     }
-    return res.status(500).json({ error: 'Erro ao iniciar sessão. Tente novamente.' })
+    return res.status(500).json({
+      error: 'Erro ao iniciar sessão. Tente novamente.',
+      detail: msg,
+    })
   }
 })
 
