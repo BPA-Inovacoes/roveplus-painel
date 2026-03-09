@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { Plus, Edit2, Trash2, Store, AlertTriangle, CheckCircle } from 'lucide-react'
 import { api } from '../api/client'
 import { useAlert } from '../contexts/AlertContext'
+import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
 
 interface Servidor {
   id: number
@@ -34,6 +35,11 @@ export default function Revendedores() {
     servidorId: null,
     observacoes: '',
   })
+  const [tablePage, setTablePage] = useState(1)
+
+  const totalTablePages = Math.max(1, Math.ceil(list.length / ROWS_PER_PAGE))
+  const tablePageClamped = Math.min(tablePage, totalTablePages)
+  const pagedList = list.slice((tablePageClamped - 1) * ROWS_PER_PAGE, tablePageClamped * ROWS_PER_PAGE)
 
   function load() {
     setLoading(true)
@@ -161,6 +167,7 @@ export default function Revendedores() {
         {loading ? (
           <div className="p-8 text-center text-gray-400">A carregar...</div>
         ) : (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead className="bg-netflix-panel/80 text-gray-300 text-sm">
@@ -176,9 +183,9 @@ export default function Revendedores() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-netflix-border/80 text-gray-200">
-                {list.map((r, idx) => (
+                {pagedList.map((r, idx) => (
                   <tr key={r.id} className="hover:bg-netflix-hover/80 transition-colors">
-                    <td className="px-4 py-3 text-center text-gray-400 text-sm">{idx + 1}</td>
+                    <td className="px-4 py-3 text-center text-gray-400 text-sm">{(tablePageClamped - 1) * ROWS_PER_PAGE + idx + 1}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <div className="p-1.5 rounded-lg bg-primary-600/20 text-primary-400">
@@ -260,6 +267,8 @@ export default function Revendedores() {
               </tbody>
             </table>
           </div>
+          <TablePagination totalItems={list.length} currentPage={tablePageClamped} onPageChange={setTablePage} />
+          </>
         )}
         {!loading && list.length === 0 && (
           <div className="p-8 text-center text-gray-400">Nenhum revendedor. Adicione o primeiro.</div>

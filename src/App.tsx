@@ -11,6 +11,7 @@ import Salas from './pages/Salas'
 import Indicacoes from './pages/Indicacoes'
 import Audit from './pages/Audit'
 import Utilizadores from './pages/Utilizadores'
+import Financeiro from './pages/Financeiro'
 import Manual from './pages/Manual'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -48,6 +49,7 @@ function App() {
         <Route path="salas" element={<Salas />} />
         <Route path="indicacoes" element={<Indicacoes />} />
         <Route path="utilizadores" element={<Utilizadores />} />
+        <Route path="financeiro" element={<Financeiro />} />
         <Route path="audit" element={<Audit />} />
         <Route path="manual" element={<Manual />} />
       </Route>

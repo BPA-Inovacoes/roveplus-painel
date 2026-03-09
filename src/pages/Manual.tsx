@@ -10,6 +10,7 @@ import {
   Gift,
   UserCog,
   FileText,
+  DollarSign,
   ChevronDown,
   ChevronRight,
 } from 'lucide-react'
@@ -287,6 +288,52 @@ const SECOES: Secao[] = [
         titulo: 'Filtrar indicações',
         passos: [
           'Use os chips: Total, Pendentes, Confirmadas para filtrar.',
+        ],
+      },
+    ],
+  },
+  {
+    id: 'financeiro',
+    icon: DollarSign,
+    titulo: 'Financeiro',
+    desc: 'Controlo financeiro simples: acompanha clientes, tipos de serviço, quanto cada um paga e quanto deve entrar mensalmente. Projeção de receitas e fluxo de entradas – para gestão interna, não contabilidade formal.',
+    detalhes: [
+      {
+        titulo: 'O que é esta área',
+        passos: [
+          'Não é contabilidade pesada nem formal. É apenas controlo financeiro simples e projeção de receitas.',
+          'Acompanha quantos clientes tens, os tipos de serviço (Netflix, IPTV por servidor), quanto cada cliente paga por mês e quanto dinheiro deve entrar mensalmente.',
+          'Visão clara das receitas previstas, crescimento de clientes e valor total esperado por mês.',
+          'Usado para gestão interna do negócio, não para fins contabilísticos oficiais.',
+        ],
+      },
+      {
+        titulo: 'Cálculo das entradas',
+        passos: [
+          'Receita mensal = soma do valor que cada cliente ativo paga (preço do serviço).',
+          'Separada por tipo: Netflix e IPTV.',
+          'Receita por servidor: no IPTV, quanto entra por cada servidor no mês atual.',
+          'Receita do mês (est.): clientes cujo vencimento cai no mês atual.',
+        ],
+      },
+      {
+        titulo: 'Projeção de receita futura',
+        passos: [
+          'Projeção simples: receita mensal × número de meses (assumindo clientes ativos mantêm-se).',
+          'Com crescimento: adicione estimativa de novos clientes por mês e valor médio para recalcular.',
+        ],
+      },
+      {
+        titulo: 'Finanças devidas',
+        passos: [
+          'Valor em dívida de clientes vencidos. Use o seletor para ver Netflix, IPTV ou Total.',
+        ],
+      },
+      {
+        titulo: 'Receita do mês e gráfico',
+        passos: [
+          'Receita do mês (est.): receita estimada com base nos clientes ativos cujo vencimento cai no mês atual.',
+          'O gráfico mostra a evolução das entradas pelos últimos meses.',
         ],
       },
     ],

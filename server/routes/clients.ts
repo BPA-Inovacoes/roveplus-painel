@@ -13,6 +13,15 @@ router.get('/', async (req, res) => {
   const { servico, servidorId, status, vencendo, revendedorId } = req.query
   const user = (req as unknown as { user: AuthPayload }).user
   const roleFilter = getRoleServicoFilter(user.role)
+
+  // Atualizar automaticamente para vencido: clientes ativos cuja dataFim já passou
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  await prisma.client.updateMany({
+    where: { status: 'ativo', dataFim: { lt: today } },
+    data: { status: 'vencido' },
+  })
+
   const where: Record<string, unknown> = {}
   if (roleFilter) where.servico = roleFilter
   else if (servico) where.servico = servico

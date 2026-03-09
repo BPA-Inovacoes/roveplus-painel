@@ -9,6 +9,7 @@ import {
   Gift,
   FileText,
   BookOpen,
+  DollarSign,
   LogOut,
   Menu,
   X,
@@ -24,6 +25,7 @@ const nav = [
   { to: '/salas', icon: LayoutGrid, label: 'Salas Netflix', roles: ['admin', 'geral', 'netflix', 'suporte'] },
   { to: '/indicacoes', icon: Gift, label: 'Indicações' },
   { to: '/utilizadores', icon: UserCog, label: 'Utilizadores', roles: ['admin'] },
+  { to: '/financeiro', icon: DollarSign, label: 'Financeiro', roles: ['admin'] },
   { to: '/audit', icon: FileText, label: 'Log', roles: ['admin'] },
   { to: '/manual', icon: BookOpen, label: 'Manual' },
 ]

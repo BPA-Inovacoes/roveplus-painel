@@ -17,6 +17,7 @@ import {
 import { api } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { useAlert } from '../contexts/AlertContext'
+import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
 
 interface Client {
   id: number
@@ -119,6 +120,7 @@ export default function Clientes() {
   const [clientSuspender, setClientSuspender] = useState<Client | null>(null)
   const [clientAtivar, setClientAtivar] = useState<Client | null>(null)
   const [editStep, setEditStep] = useState(1)
+  const [tablePage, setTablePage] = useState(1)
   const [form, setForm] = useState<Partial<Client>>({
     nome: '',
     whatsapp: '',
@@ -164,6 +166,10 @@ export default function Clientes() {
     if (tab === 'netflix' && filter.salaId && c.salaId !== Number(filter.salaId)) return false
     return true
   })
+
+  const totalTablePages = Math.max(1, Math.ceil(filtered.length / ROWS_PER_PAGE))
+  const tablePageClamped = Math.min(tablePage, totalTablePages)
+  const pagedClientes = filtered.slice((tablePageClamped - 1) * ROWS_PER_PAGE, tablePageClamped * ROWS_PER_PAGE)
 
   const showIptvTab = !operadorNetflix
   const showNetflixTab = !operadorIptv
@@ -478,6 +484,7 @@ export default function Clientes() {
             <span className="text-sm">A carregar clientes...</span>
           </div>
         ) : (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead className="bg-netflix-panel/80 text-gray-300 text-sm">
@@ -501,10 +508,11 @@ export default function Clientes() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-netflix-border/80 text-gray-200">
-                {filtered.map((c, idx) => {
+                {pagedClientes.map((c, idx) => {
                   const days = daysUntil(c.dataFim)
                   const alert = c.status === 'ativo' && days <= 3 && days >= 0
                   const expired = c.status === 'ativo' && days < 0
+                  const rowNum = (tablePageClamped - 1) * ROWS_PER_PAGE + idx + 1
                   return (
                     <tr
                       key={c.id}
@@ -512,7 +520,7 @@ export default function Clientes() {
                         alert ? 'bg-amber-900/15' : expired ? 'bg-red-900/15' : ''
                       }`}
                     >
-                      <td className="px-4 py-3 text-center text-gray-400 text-sm">{idx + 1}</td>
+                      <td className="px-4 py-3 text-center text-gray-400 text-sm">{rowNum}</td>
                       <td className="px-4 py-3">
                         <div className="font-medium text-white">{c.nome}</div>
                       </td>
@@ -632,6 +640,12 @@ export default function Clientes() {
               </tbody>
             </table>
           </div>
+          <TablePagination
+            totalItems={filtered.length}
+            currentPage={tablePageClamped}
+            onPageChange={setTablePage}
+          />
+          </>
         )}
         {!loading && filtered.length === 0 && (
           <div className="p-12 text-center text-gray-400">

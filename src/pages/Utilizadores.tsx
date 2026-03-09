@@ -4,6 +4,7 @@ import { Edit2, Trash2, KeyRound, UserCog, AlertTriangle, CheckCircle } from 'lu
 import { useAuth } from '../contexts/AuthContext'
 import { useAlert } from '../contexts/AlertContext'
 import { api } from '../api/client'
+import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
 
 export interface UserRow {
   id: number
@@ -70,6 +71,11 @@ export default function Utilizadores() {
   const [userToAtivar, setUserToAtivar] = useState<UserRow | null>(null)
   const [userToResetPassword, setUserToResetPassword] = useState<UserRow | null>(null)
   const [resetPasswordForm, setResetPasswordForm] = useState({ password: '', confirm: '' })
+  const [tablePage, setTablePage] = useState(1)
+
+  const totalTablePages = Math.max(1, Math.ceil(users.length / ROWS_PER_PAGE))
+  const tablePageClamped = Math.min(tablePage, totalTablePages)
+  const pagedUsers = users.slice((tablePageClamped - 1) * ROWS_PER_PAGE, tablePageClamped * ROWS_PER_PAGE)
 
   const load = () => {
     setLoading(true)
@@ -313,11 +319,11 @@ export default function Utilizadores() {
               </tr>
             </thead>
             <tbody className="divide-y divide-netflix-border/80">
-              {users.map((u, idx) => {
+              {pagedUsers.map((u, idx) => {
                 const roleStyle = ROLE_STYLES[u.role] ?? ROLE_STYLES.geral
                 return (
                   <tr key={u.id} className="hover:bg-netflix-hover/80 transition-colors">
-                    <td className="px-4 py-3 text-center text-gray-400 text-sm">{idx + 1}</td>
+                    <td className="px-4 py-3 text-center text-gray-400 text-sm">{(tablePageClamped - 1) * ROWS_PER_PAGE + idx + 1}</td>
                     <td className="px-4 py-3 text-sm text-white">
                       <div className="flex flex-col">
                         <span className="font-medium">{u.nome}</span>
@@ -409,6 +415,7 @@ export default function Utilizadores() {
               })}
             </tbody>
           </table>
+          <TablePagination totalItems={users.length} currentPage={tablePageClamped} onPageChange={setTablePage} />
         </div>
       )}
 

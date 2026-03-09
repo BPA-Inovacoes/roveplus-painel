@@ -32,11 +32,12 @@ Abrir http://localhost:3000 → login: **admin@roveplus.com** / **admin123**.
 | **Login** | Logo Rove+, sessão com cookie httpOnly |
 | **Dashboard** | Totais Netflix/IPTV, clientes por servidor, vencendo hoje, receita do mês, indicações, gráficos |
 | **Clientes** | Filtros (serviço, servidor, revendedor, sala, status, vencimento), CRUD, Renovar, Marcar como pago, Atribuir sala, Suspender, Ativar. Servidores secundários na lista ao criar cliente. |
-| **Servidores** | CRUD IPTV; Principal e Secundário (secundário pertence a um primário); status: online / instável / offline |
+| **Servidores** | CRUD IPTV; Principal e Secundário; custo mensal; status: online / instável / offline |
 | **Revendedores** | CRUD; Suspender / Ativar; chips total, ativos, suspensos |
 | **Salas Netflix** | CRUD; Email e senha da conta; ver/ocultar senha no editar; Suspender / Ativar |
 | **Indicações** | Registar, confirmar, editar, reverter, excluir; chips total, pendentes, confirmadas |
 | **Utilizadores (admin)** | Criar, editar, redefinir senha, suspender, ativar, eliminar. Perfis: Geral, Netflix, IPTV. |
+| **Financeiro (admin)** | Controlo financeiro simples: receita prevista, fluxo de entradas por tipo e por servidor, projeção futura. Não é contabilidade formal – para gestão interna. |
 | **Log (admin)** | Auditoria de alterações; filtros por entidade, ação, utilizador e período |
 | **Manual** | Guia do utilizador com instruções detalhadas por módulo |
 | **Alertas** | Linhas amarelas (3 dias) e vermelhas (vencido); botão Suspender |
@@ -164,7 +165,8 @@ Se a conexão falhar, confirma a URL (user, password, host, porta) e, em serviç
 | `npm run build:api` | Compila a API (server/dist) |
 | `npm run db:push` | Cria/atualiza tabelas |
 | `npm run db:seed` | Cria admin inicial |
-| `npm run db:studio` | Prisma Studio |
+| `npm | `npm run test:db` | Testa conexão à BD |
+run db:studio` | Prisma Studio |
 | `npm run db:generate` | Gera Prisma Client |
 
 ---
@@ -180,19 +182,26 @@ rove-plus/
 ├── src/              # Frontend React (Login, Dashboard, Clientes, Servidores, Revendedores, Salas, Indicações, Utilizadores, Audit, Manual)
 ├── .env              # Variáveis (não commitar; usar .env.example como base)
 ├── .env.example      # Exemplo de variáveis
-├── vercel.json       # Configuração de build e rewrites
-└── package.json
-```
+├── vercel.json       # Configuração de build e rewrites## Resolução de problemas
+
+**"Internal Server Error" ou dados não carregam:**
+- Usa `npm run dev:all` (não só `npm run dev`) – a API tem de estar na porta 3001.
+
+**"Não puxa os dados da BD":**
+1. **Diagnóstico:** `npm run diagnostico` – varre todos os passos (BD, API, login, clients).
+2. Se der erro "coluna custoMensal não existe" ou Prisma desatualizado:
+   - Para a API (Ctrl+C no terminal)
+   - `npx prisma generate`
+   - `npm run dev:all`
+3. `npm run test:db` – verifica se a BD responde.
+4. Faz login – sem sessão, a API devolve 401.
 
 ---
 
-## Segurança e níveis de acesso
 
-- Alterar **`JWT_SECRET`** em produção.
-- O projeto corre em HTTPS na Vercel.
-- Cookies de sessão com `httpOnly` e `sameSite: lax`.
-
-**Roles (campo `role` na tabela `User`):**
+└── package.json
+```
+ `User`):**
 
 | Role | Acesso |
 |------|--------|

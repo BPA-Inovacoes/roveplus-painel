@@ -1,3 +1,4 @@
+import 'express-async-errors'
 import express from 'express'
 import cors from 'cors'
 import cookieParser from 'cookie-parser'
@@ -37,6 +38,13 @@ app.get('/api/health', async (_req, res) => {
   } catch (e) {
     res.status(503).json({ ok: false, db: 'error', message: e instanceof Error ? e.message : 'Conexão à BD falhou' })
   }
+})
+
+// Handler de erros global – captura erros não tratados nas rotas
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('[API] Erro:', err)
+  const message = err instanceof Error ? err.message : 'Erro interno'
+  res.status(500).json({ error: 'Internal Server Error', detail: message })
 })
 
 export default app

@@ -29,6 +29,7 @@ import {
   LayoutDashboard,
 } from 'lucide-react'
 import { api } from '../api/client'
+import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
 
 interface DashboardData {
   totalNetflix: number
@@ -62,6 +63,7 @@ const CHART_COLORS = {
 export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [servidorTablePage, setServidorTablePage] = useState(1)
 
   useEffect(() => {
     api
@@ -403,9 +405,14 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-netflix-border/80 text-gray-200">
-                {data.clientsByServidor.map((s, idx) => (
+                {(() => {
+                  const servidorList = data.clientsByServidor ?? []
+                  const totalPages = Math.max(1, Math.ceil(servidorList.length / ROWS_PER_PAGE))
+                  const page = Math.min(servidorTablePage, totalPages)
+                  const paged = servidorList.slice((page - 1) * ROWS_PER_PAGE, page * ROWS_PER_PAGE)
+                  return paged.map((s, idx) => (
                   <tr key={s.id} className="hover:bg-netflix-hover/80 transition-colors">
-                    <td className="px-5 py-3 text-center text-gray-400 text-sm">{idx + 1}</td>
+                    <td className="px-5 py-3 text-center text-gray-400 text-sm">{(page - 1) * ROWS_PER_PAGE + idx + 1}</td>
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-3">
                         <div className="p-2 rounded-lg bg-primary-500/20 text-primary-400">
@@ -431,10 +438,18 @@ export default function Dashboard() {
                       </span>
                     </td>
                   </tr>
-                ))}
+                  ));
+                })()}
               </tbody>
             </table>
           </div>
+          {data.clientsByServidor.length > ROWS_PER_PAGE && (
+            <TablePagination
+              totalItems={data.clientsByServidor.length}
+              currentPage={Math.min(servidorTablePage, Math.max(1, Math.ceil(data.clientsByServidor.length / ROWS_PER_PAGE)))}
+              onPageChange={setServidorTablePage}
+            />
+          )}
         </div>
       )}
     </motion.div>

@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { FileText, Filter } from 'lucide-react'
 import { api } from '../api/client'
 import { tratamentoNome } from '../utils/tratamento'
+import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
 
 interface LogEntry {
   id: number
@@ -66,6 +67,11 @@ export default function Audit() {
     from: '',
     to: '',
   })
+  const [tablePage, setTablePage] = useState(1)
+
+  const totalTablePages = Math.max(1, Math.ceil(list.length / ROWS_PER_PAGE))
+  const tablePageClamped = Math.min(tablePage, totalTablePages)
+  const pagedList = list.slice((tablePageClamped - 1) * ROWS_PER_PAGE, tablePageClamped * ROWS_PER_PAGE)
 
   function load() {
     setLoading(true)
@@ -161,6 +167,7 @@ export default function Audit() {
         {loading ? (
           <div className="p-8 text-center text-gray-400">A carregar...</div>
         ) : (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -174,9 +181,9 @@ export default function Audit() {
                 </tr>
               </thead>
               <tbody>
-                {list.map((entry, idx) => (
+                {pagedList.map((entry, idx) => (
                   <tr key={entry.id} className="border-t border-netflix-border hover:bg-netflix-hover">
-                    <td className="px-4 py-3 text-center text-gray-400 text-sm">{idx + 1}</td>
+                    <td className="px-4 py-3 text-center text-gray-400 text-sm">{(tablePageClamped - 1) * ROWS_PER_PAGE + idx + 1}</td>
                     <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
                       {new Date(entry.createdAt).toLocaleString('pt-BR')}
                     </td>
@@ -192,6 +199,8 @@ export default function Audit() {
               </tbody>
             </table>
           </div>
+          <TablePagination totalItems={list.length} currentPage={tablePageClamped} onPageChange={setTablePage} />
+          </>
         )}
         {!loading && list.length === 0 && (
           <div className="p-8 text-center text-gray-400">Nenhum registo no log.</div>

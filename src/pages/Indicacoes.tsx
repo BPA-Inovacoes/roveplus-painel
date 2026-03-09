@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { Plus, Gift, User, Check, Edit2, Trash2, RotateCcw } from 'lucide-react'
 import { api } from '../api/client'
 import { useAlert } from '../contexts/AlertContext'
+import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
 
 interface Indicacao {
   id: number
@@ -28,6 +29,7 @@ export default function Indicacoes() {
   const [modal, setModal] = useState<'new' | 'edit' | null>(null)
   const [indicacaoToDelete, setIndicacaoToDelete] = useState<Indicacao | null>(null)
   const [form, setForm] = useState({ id: 0, indicadorId: '', indicadoNome: '', indicadoWhatsapp: '', status: 'pendente' })
+  const [tablePage, setTablePage] = useState(1)
 
   function load() {
     setLoading(true)
@@ -50,6 +52,10 @@ export default function Indicacoes() {
     filter === ''
       ? list
       : list.filter((i) => i.status === filter)
+
+  const totalTablePages = Math.max(1, Math.ceil(filtered.length / ROWS_PER_PAGE))
+  const tablePageClamped = Math.min(tablePage, totalTablePages)
+  const pagedIndicacoes = filtered.slice((tablePageClamped - 1) * ROWS_PER_PAGE, tablePageClamped * ROWS_PER_PAGE)
 
   const stats = {
     total: filtered.length,
@@ -171,6 +177,7 @@ export default function Indicacoes() {
             <span className="text-sm">A carregar indicações...</span>
           </div>
         ) : (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead className="bg-netflix-panel/80 text-gray-300 text-sm">
@@ -185,9 +192,9 @@ export default function Indicacoes() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-netflix-border/80 text-gray-200">
-                {filtered.map((i, idx) => (
+                {pagedIndicacoes.map((i, idx) => (
                   <tr key={i.id} className="hover:bg-netflix-hover/80 transition-colors">
-                    <td className="px-4 py-3 text-center text-gray-400 text-sm">{idx + 1}</td>
+                    <td className="px-4 py-3 text-center text-gray-400 text-sm">{(tablePageClamped - 1) * ROWS_PER_PAGE + idx + 1}</td>
                     <td className="px-4 py-3">
                       <span className="font-medium text-white">{i.indicadoNome}</span>
                     </td>
@@ -264,6 +271,8 @@ export default function Indicacoes() {
               </tbody>
             </table>
           </div>
+          <TablePagination totalItems={filtered.length} currentPage={tablePageClamped} onPageChange={setTablePage} />
+          </>
         )}
         {!loading && filtered.length === 0 && (
           <div className="p-12 text-center text-gray-400 flex flex-col items-center gap-2">

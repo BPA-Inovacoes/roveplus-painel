@@ -12,6 +12,13 @@ router.get('/', async (req, res) => {
   const roleFilter = getRoleServicoFilter(user.role)
   const today = new Date()
   today.setHours(0, 0, 0, 0)
+
+  // Atualizar automaticamente para vencido: clientes ativos cuja dataFim já passou
+  await prisma.client.updateMany({
+    where: { status: 'ativo', dataFim: { lt: today } },
+    data: { status: 'vencido' },
+  })
+
   const clientWhereBase = { status: 'ativo' as const }
   const clientWhereNetflix = { ...clientWhereBase, servico: 'netflix' }
   const clientWhereIptv = { ...clientWhereBase, servico: 'iptv' }
@@ -51,6 +58,8 @@ router.get('/', async (req, res) => {
     totalRevendedores,
     clientesComRevendedor,
     clients,
+    vencidosValores,
+    servidoresList,
   ] = await Promise.all([
     roleFilter === 'iptv' ? 0 : prisma.client.count({ where: clientWhereNetflix }),
     roleFilter === 'netflix' ? 0 : prisma.client.count({ where: clientWhereIptv }),
@@ -87,13 +96,63 @@ router.get('/', async (req, res) => {
     canAccessServidores(user.role) ? prisma.client.count({ where: { ...clientWhereRole, revendedorId: { not: null } } }) : 0,
     prisma.client.findMany({
       where: roleFilter ? { ...clientWhereBase, servico: roleFilter } : clientWhereBase,
-      select: { valor: true, dataFim: true },
+      select: { valor: true, dataFim: true, servico: true, servidorId: true },
     }),
+    prisma.client.findMany({
+      where: {
+        status: { in: ['vencido', 'Vencido'] },
+        ...(roleFilter ? { servico: roleFilter } : {}),
+      },
+      select: { valor: true, servico: true },
+    }),
+    canAccessServidores(user.role)
+      ? prisma.servidor.findMany({ select: { id: true, nome: true } })
+      : [],
   ])
 
-  const receitaMes = clients
-    .filter((c) => c.dataFim >= inicioMes && c.dataFim <= today)
-    .reduce((s, c) => s + Number(c.valor), 0)
+  // Receita do mês = soma dos valores dos clientes cujo vencimento (dataFim) cai no mês atual (dia 1 a fim do mês)
+  const clientsNoMes = clients.filter((c) => {
+    const df = new Date(c.dataFim)
+    return df >= inicioMes && df <= fimMes
+  })
+  const receitaMes = clientsNoMes.reduce((s, c) => s + Number(c.valor), 0)
+  const receitaMesNetflix = clientsNoMes.filter((c) => c.servico === 'netflix').reduce((s, c) => s + Number(c.valor), 0)
+  const receitaMesIptv = clientsNoMes.filter((c) => c.servico === 'iptv').reduce((s, c) => s + Number(c.valor), 0)
+
+  // Receita mensal projetada = soma de todos os valores dos clientes ativos (quanto entra por mês)
+  const receitaMensalProjetada = clients.reduce((s, c) => s + Number(c.valor), 0)
+  const receitaMensalProjetadaNetflix = clients.filter((c) => c.servico === 'netflix').reduce((s, c) => s + Number(c.valor), 0)
+  const receitaMensalProjetadaIptv = clients.filter((c) => c.servico === 'iptv').reduce((s, c) => s + Number(c.valor), 0)
+
+  // Valor em dívida (clientes vencidos) – servico normalizado para minúsculas
+  const vencidos = (vencidosValores || []) as { valor: unknown; servico: string }[]
+  const toNum = (v: unknown) => (v != null && v !== '' ? Number(v) : 0)
+  const valorVencidoNetflix = vencidos
+    .filter((v) => String(v.servico || '').toLowerCase() === 'netflix')
+    .reduce((s, v) => s + toNum(v.valor), 0)
+  const valorVencidoIptv = vencidos
+    .filter((v) => String(v.servico || '').toLowerCase() === 'iptv')
+    .reduce((s, v) => s + toNum(v.valor), 0)
+  const valorVencidoTotal = valorVencidoNetflix + valorVencidoIptv
+
+  // Receita por servidor (IPTV) – mês atual
+  const servidoresMap = new Map<number, { nome: string; receita: number; clientes: number }>()
+  for (const s of servidoresList || []) {
+    servidoresMap.set((s as { id: number; nome: string }).id, { nome: (s as { id: number; nome: string }).nome, receita: 0, clientes: 0 })
+  }
+  for (const c of clientsNoMes) {
+    if (c.servico === 'iptv') {
+      const sid = c.servidorId
+      if (sid && servidoresMap.has(sid)) {
+        const ent = servidoresMap.get(sid)!
+        ent.receita += Number(c.valor)
+        ent.clientes += 1
+      }
+    }
+  }
+  const receitaPorServidor = Array.from(servidoresMap.entries())
+    .map(([id, v]) => ({ servidorId: id, servidorNome: v.nome, receita: Math.round(v.receita * 100) / 100, clientes: v.clientes }))
+    .filter((r) => r.clientes > 0)
 
   // Últimos 6 meses: receita (soma de valor onde dataFim cai no mês)
   const receitaUltimosMeses: { mes: string; valor: number }[] = []
@@ -103,7 +162,10 @@ router.get('/', async (req, res) => {
     const start = new Date(d.getFullYear(), d.getMonth(), 1)
     const end = new Date(d.getFullYear(), d.getMonth() + 1, 0)
     const total = clients
-      .filter((c) => c.dataFim >= start && c.dataFim <= end)
+      .filter((c) => {
+        const df = new Date(c.dataFim)
+        return df >= start && df <= end
+      })
       .reduce((s, c) => s + Number(c.valor), 0)
     receitaUltimosMeses.push({
       mes: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
@@ -112,9 +174,14 @@ router.get('/', async (req, res) => {
   }
 
   const receitaMesVal = Math.round(receitaMes * 100) / 100
+  const receitaMesNetflixVal = Math.round(receitaMesNetflix * 100) / 100
+  const receitaMesIptvVal = Math.round(receitaMesIptv * 100) / 100
   const receitaMesAntVal = Math.round((receitaMesAnterior || 0) * 100) / 100
   const variacaoReceita =
     receitaMesAntVal > 0 ? Math.round(((receitaMesVal - receitaMesAntVal) / receitaMesAntVal) * 1000) / 10 : 0
+  const receitaProjetadaVal = Math.round(receitaMensalProjetada * 100) / 100
+  const valorVencidoNetflixVal = Math.round(valorVencidoNetflix * 100) / 100
+  const valorVencidoIptvVal = Math.round(valorVencidoIptv * 100) / 100
 
   res.json({
     totalNetflix: roleFilter === 'iptv' ? 0 : totalNetflix,
@@ -134,8 +201,17 @@ router.get('/', async (req, res) => {
         }))
       : [],
     receitaMes: receitaMesVal,
+    receitaMesNetflix: receitaMesNetflixVal,
+    receitaMesIptv: receitaMesIptvVal,
     receitaMesAnterior: receitaMesAntVal,
     variacaoReceita,
+    receitaMensalProjetada: receitaProjetadaVal,
+    receitaMensalProjetadaNetflix: Math.round(receitaMensalProjetadaNetflix * 100) / 100,
+    receitaMensalProjetadaIptv: Math.round(receitaMensalProjetadaIptv * 100) / 100,
+    valorVencidoNetflix: valorVencidoNetflixVal,
+    valorVencidoIptv: valorVencidoIptvVal,
+    valorVencidoTotal: valorVencidoNetflixVal + valorVencidoIptvVal,
+    receitaPorServidor,
     indicacoesTotal,
     indicacoesPendentes,
     indicacoesConfirmadas,
