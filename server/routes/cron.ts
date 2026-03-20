@@ -72,7 +72,8 @@ router.get('/alertas', async (req, res) => {
       select: { whatsapp: true },
     })
 
-    const formatDate = (d: Date) => d.toLocaleDateString('pt-BR')
+    // Sala.dataFim é opcional no schema (DateTime?); por isso pode vir null no Prisma.
+    const formatDate = (d: Date | null) => (d ? d.toLocaleDateString('pt-BR') : '—')
 
     const adminMsg = testAdmin
       ? 'Rove+ Painel: Teste de alertas do admin (clientes/salas/servidores). Se recebeu esta mensagem, está a funcionar.'
