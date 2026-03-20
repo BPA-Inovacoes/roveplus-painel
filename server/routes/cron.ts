@@ -4,12 +4,20 @@ import { sendWhatsAppMessage, templates } from '../services/whatsapp.js'
 
 const router = Router()
 
-// Chamar via Vercel Cron (GET /api/cron/alertas?secret=SEU_SECRET)
+// Chamar via Vercel Cron (GET /api/cron/alertas)
+// - Na Vercel: Vercel envia Authorization: Bearer <CRON_SECRET>
+// - Local: podes também usar ?secret=SEU_SECRET para testes
 // Configurar em vercel.json: "crons": [{ "path": "/api/cron/alertas", "schedule": "0 5 * * *" }]
 router.get('/alertas', async (req, res) => {
   const secret = process.env.CRON_SECRET
-  if (secret && req.query.secret !== secret) {
-    return res.status(401).json({ error: 'Unauthorized' })
+  if (secret) {
+    // Vercel Cron normalmente chama com Authorization: Bearer <CRON_SECRET>
+    const auth = req.headers.authorization || ''
+    const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : ''
+    const querySecret = typeof req.query.secret === 'string' ? req.query.secret : ''
+    if (token !== secret && querySecret !== secret) {
+      return res.status(401).json({ error: 'Unauthorized' })
+    }
   }
 
   const testAdmin = req.query.testAdmin === '1'
