@@ -31,7 +31,7 @@ interface FinanceData {
   totalIptv: number
   vencendoHoje: number
   vencendoEm7Dias?: number
-  receitaUltimosMeses?: { mes: string; valor: number }[]
+  receitaUltimosMeses?: { mes: string; valor: number; valorNetflix?: number; valorIptv?: number }[]
   valorVencidoNetflix?: number
   valorVencidoIptv?: number
   valorVencidoTotal?: number
@@ -69,6 +69,8 @@ export default function Financeiro() {
   const variacaoReceita = data?.variacaoReceita ?? 0
   const receitaMeses = data?.receitaUltimosMeses ?? []
   const receitaMensal = Number(data?.receitaMensalProjetada ?? 0)
+  const receitaMensalNetflix = Number(data?.receitaMensalProjetadaNetflix ?? 0)
+  const receitaMensalIptv = Number(data?.receitaMensalProjetadaIptv ?? 0)
   const receitaPorServidor = data?.receitaPorServidor ?? []
 
   // Projeção: receita mensal × N meses (clientes ativos mantêm-se)
@@ -120,20 +122,20 @@ export default function Financeiro() {
         </p>
       </div>
 
-      {/* Resumo – 3 números principais */}
+      {/* Resumo geral */}
       <div className="rounded-xl border border-netflix-border/80 bg-netflix-card/80 p-5 shadow-lg shadow-black/20">
         <h3 className="text-base font-semibold text-white mb-4 flex items-center gap-2">
           <LayoutDashboard className="w-5 h-5 text-gray-400" />
-          Resumo
+          Resumo geral
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="rounded-lg border border-green-600/40 bg-green-900/20 p-4">
-            <p className="text-xs text-green-300 uppercase tracking-wider">Receita mensal (projetada)</p>
+            <p className="text-xs text-green-300 uppercase tracking-wider">Receita mensal total (projetada)</p>
             <p className="text-xl font-bold text-white mt-0.5">{receitaMensal.toFixed(2)} kz</p>
-            <p className="text-xs text-gray-500 mt-1">Soma dos clientes ativos</p>
+            <p className="text-xs text-gray-500 mt-1">{totalClientes} clientes ativos</p>
           </div>
-          <div className="rounded-lg border border-primary-600/40 bg-primary-900/20 p-4">
-            <p className="text-xs text-primary-300 uppercase tracking-wider">Receita deste mês (est.)</p>
+          <div className="rounded-lg border border-netflix-border/80 bg-netflix-panel/60 p-4">
+            <p className="text-xs text-gray-400 uppercase tracking-wider">Receita deste mês (est.)</p>
             <p className="text-xl font-bold text-white mt-0.5">{receita} kz</p>
             <p className="text-xs text-gray-500 mt-1">Vencimentos que caem neste mês</p>
             {data?.receitaMesAnterior != null && data.receitaMesAnterior > 0 && (
@@ -154,62 +156,48 @@ export default function Financeiro() {
         </div>
       </div>
 
-      {/* Entradas mensais por tipo de serviço */}
-      <div className="rounded-xl border border-primary-700/60 bg-primary-900/20 p-6 shadow-lg shadow-black/20">
+      {/* Netflix */}
+      <div className="rounded-xl border border-primary-600/50 bg-primary-900/20 p-6 shadow-lg shadow-black/20">
         <h3 className="text-base font-semibold text-white mb-4 flex items-center gap-2">
-          <Wallet className="w-5 h-5 text-primary-400" />
-          Por tipo de serviço
+          <Tv className="w-5 h-5 text-primary-400" />
+          Netflix
         </h3>
-        <p className="text-sm text-gray-400 mb-4">
-          Receita mensal por tipo (Netflix, IPTV) e número de clientes em cada.
-        </p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="rounded-lg border border-netflix-border/80 bg-netflix-card/80 p-4">
-            <p className="text-xs text-gray-400 uppercase tracking-wider">Total</p>
-            <p className="text-xl font-bold text-white mt-0.5">{receitaMensal.toFixed(2)} kz</p>
-            <p className="text-xs text-gray-500 mt-1">{totalClientes} clientes</p>
-          </div>
           <div className="rounded-lg border border-primary-600/40 bg-primary-900/30 p-4">
-            <p className="text-xs text-primary-300 uppercase tracking-wider flex items-center gap-1">
-              <Tv className="w-3.5 h-3.5" /> Netflix
-            </p>
-            <p className="text-xl font-bold text-white mt-0.5">
-              {Number(data?.receitaMensalProjetadaNetflix ?? 0).toFixed(2)} kz
-            </p>
-            <p className="text-xs text-gray-500 mt-1">{data?.totalNetflix ?? 0} clientes ({percentNetflix.toFixed(0)}%)</p>
+            <p className="text-xs text-primary-300 uppercase tracking-wider">Receita mensal projetada</p>
+            <p className="text-xl font-bold text-white mt-0.5">{Number(data?.receitaMensalProjetadaNetflix ?? 0).toFixed(2)} kz</p>
+            <p className="text-xs text-gray-500 mt-1">{data?.totalNetflix ?? 0} clientes ({percentNetflix.toFixed(0)}% do total)</p>
           </div>
-          <div className="rounded-lg border border-blue-600/40 bg-blue-900/20 p-4">
-            <p className="text-xs text-blue-300 uppercase tracking-wider flex items-center gap-1">
-              <Server className="w-3.5 h-3.5" /> IPTV
-            </p>
-            <p className="text-xl font-bold text-white mt-0.5">
-              {Number(data?.receitaMensalProjetadaIptv ?? 0).toFixed(2)} kz
-            </p>
-            <p className="text-xs text-gray-500 mt-1">{data?.totalIptv ?? 0} clientes ({percentIptv.toFixed(0)}%)</p>
+          <div className="rounded-lg border border-primary-500/30 bg-netflix-card/80 p-4">
+            <p className="text-xs text-primary-300/90 uppercase tracking-wider">Receita deste mês (est.)</p>
+            <p className="text-xl font-bold text-white mt-0.5">{Number(data?.receitaMesNetflix ?? 0).toFixed(2)} kz</p>
+          </div>
+          <div className="rounded-lg border border-amber-600/40 bg-amber-900/20 p-4">
+            <p className="text-xs text-amber-300 uppercase tracking-wider">Em dívida</p>
+            <p className="text-xl font-bold text-white mt-0.5">{valorDevidoNetflix.toFixed(2)} kz</p>
           </div>
         </div>
       </div>
 
-      {/* Finanças devidas – Netflix, IPTV, Total */}
-      <div className="rounded-xl border border-netflix-border/80 bg-netflix-card/80 p-5 shadow-lg shadow-black/20">
-        <h3 className="text-base font-semibold text-white mb-1">Finanças devidas</h3>
-        <p className="text-sm text-gray-400 mb-4">Valor em dívida de clientes com status &quot;vencido&quot; (renovação em atraso).</p>
+      {/* IPTV */}
+      <div className="rounded-xl border border-blue-600/50 bg-blue-900/20 p-6 shadow-lg shadow-black/20">
+        <h3 className="text-base font-semibold text-white mb-4 flex items-center gap-2">
+          <Server className="w-5 h-5 text-blue-400" />
+          IPTV
+        </h3>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="rounded-lg border border-primary-600/40 bg-primary-900/20 p-4">
-            <p className="text-xs text-primary-300 uppercase tracking-wider flex items-center gap-1">
-              <Tv className="w-3.5 h-3.5" /> Netflix
-            </p>
-            <p className="text-xl font-bold text-white mt-1">{valorDevidoNetflix.toFixed(2)} kz</p>
+          <div className="rounded-lg border border-blue-600/40 bg-blue-900/30 p-4">
+            <p className="text-xs text-blue-300 uppercase tracking-wider">Receita mensal projetada</p>
+            <p className="text-xl font-bold text-white mt-0.5">{Number(data?.receitaMensalProjetadaIptv ?? 0).toFixed(2)} kz</p>
+            <p className="text-xs text-gray-500 mt-1">{data?.totalIptv ?? 0} clientes ({percentIptv.toFixed(0)}% do total)</p>
           </div>
-          <div className="rounded-lg border border-blue-600/40 bg-blue-900/20 p-4">
-            <p className="text-xs text-blue-300 uppercase tracking-wider flex items-center gap-1">
-              <Server className="w-3.5 h-3.5" /> IPTV
-            </p>
-            <p className="text-xl font-bold text-white mt-1">{valorDevidoIptv.toFixed(2)} kz</p>
+          <div className="rounded-lg border border-blue-500/30 bg-netflix-card/80 p-4">
+            <p className="text-xs text-blue-300/90 uppercase tracking-wider">Receita deste mês (est.)</p>
+            <p className="text-xl font-bold text-white mt-0.5">{Number(data?.receitaMesIptv ?? 0).toFixed(2)} kz</p>
           </div>
-          <div className="rounded-lg border-2 border-amber-600/50 bg-amber-900/20 p-4">
-            <p className="text-xs text-amber-300 uppercase tracking-wider">Total</p>
-            <p className="text-xl font-bold text-white mt-1">{valorDevidoTotal.toFixed(2)} kz</p>
+          <div className="rounded-lg border border-amber-600/40 bg-amber-900/20 p-4">
+            <p className="text-xs text-amber-300 uppercase tracking-wider">Em dívida</p>
+            <p className="text-xl font-bold text-white mt-0.5">{valorDevidoIptv.toFixed(2)} kz</p>
           </div>
         </div>
       </div>
@@ -283,11 +271,21 @@ export default function Financeiro() {
             />
           </div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="rounded-lg border border-netflix-border/80 bg-netflix-card/80 p-4">
-            <p className="text-xs text-gray-400 uppercase tracking-wider">Projeção simples ({mesesProjecao} meses)</p>
+            <p className="text-xs text-gray-400 uppercase tracking-wider">Total ({mesesProjecao} meses)</p>
             <p className="text-xl font-bold text-green-400 mt-0.5">{projecaoSimples.toFixed(2)} kz</p>
-            <p className="text-xs text-gray-500 mt-1">Receita mensal × {mesesProjecao} (clientes mantêm-se)</p>
+            <p className="text-xs text-gray-500 mt-1">Receita mensal × {mesesProjecao}</p>
+          </div>
+          <div className="rounded-lg border border-primary-600/40 bg-primary-900/20 p-4">
+            <p className="text-xs text-primary-300 uppercase tracking-wider flex items-center gap-1"><Tv className="w-3 h-3" /> Netflix</p>
+            <p className="text-xl font-bold text-white mt-0.5">{(receitaMensalNetflix * Math.max(0, Math.min(24, mesesProjecao))).toFixed(2)} kz</p>
+            <p className="text-xs text-gray-500 mt-1">{receitaMensalNetflix.toFixed(2)} kz/mês × {mesesProjecao}</p>
+          </div>
+          <div className="rounded-lg border border-blue-600/40 bg-blue-900/20 p-4">
+            <p className="text-xs text-blue-300 uppercase tracking-wider flex items-center gap-1"><Server className="w-3 h-3" /> IPTV</p>
+            <p className="text-xl font-bold text-white mt-0.5">{(receitaMensalIptv * Math.max(0, Math.min(24, mesesProjecao))).toFixed(2)} kz</p>
+            <p className="text-xs text-gray-500 mt-1">{receitaMensalIptv.toFixed(2)} kz/mês × {mesesProjecao}</p>
           </div>
           {novosClientesMes > 0 && (
             <div className="rounded-lg border-2 border-green-600/50 bg-green-900/20 p-4">
@@ -345,7 +343,7 @@ export default function Financeiro() {
       )}
 
       <div className="rounded-xl border border-netflix-border/80 bg-netflix-card/80 p-6 shadow-lg shadow-black/20">
-        <h3 className="text-base font-semibold text-white">Receita por mês (kz)</h3>
+        <h3 className="text-base font-semibold text-white">Receita por mês (kz) – Netflix e IPTV</h3>
         <p className="text-sm text-gray-400 mt-0.5 mb-4">
           Evolução das entradas estimadas pelos últimos meses (datas de vencimento). Receita acumulada (6 meses): <strong className="text-gray-300">{totalUltimos6Meses.toFixed(2)} kz</strong>.
         </p>
@@ -354,9 +352,17 @@ export default function Financeiro() {
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={receitaMeses} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <defs>
-                  <linearGradient id="finance-receita" x1="0" y1="0" x2="0" y2="1">
+                  <linearGradient id="finance-receita-total" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={CHART_COLORS.primary} stopOpacity={0.4} />
                     <stop offset="100%" stopColor={CHART_COLORS.primary} stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="finance-receita-netflix" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#e50914" stopOpacity={0.5} />
+                    <stop offset="100%" stopColor="#e50914" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="finance-receita-iptv" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#2563eb" stopOpacity={0.5} />
+                    <stop offset="100%" stopColor="#2563eb" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} />
@@ -379,14 +385,25 @@ export default function Financeiro() {
                     color: '#f3f4f6',
                   }}
                   labelStyle={{ color: '#9ca3af' }}
-                  formatter={((value: number | undefined) => [`${Number(value ?? 0).toFixed(2)} kz`, 'Receita']) as any}
+                  formatter={(value: number | undefined, name: string) => [`${Number(value ?? 0).toFixed(2)} kz`, name === 'valorNetflix' ? 'Netflix' : name === 'valorIptv' ? 'IPTV' : 'Total']}
                 />
                 <Area
                   type="monotone"
-                  dataKey="valor"
-                  stroke={CHART_COLORS.primary}
+                  dataKey="valorNetflix"
+                  name="valorNetflix"
+                  stackId="1"
+                  stroke="#e50914"
                   strokeWidth={2}
-                  fill="url(#finance-receita)"
+                  fill="url(#finance-receita-netflix)"
+                />
+                <Area
+                  type="monotone"
+                  dataKey="valorIptv"
+                  name="valorIptv"
+                  stackId="1"
+                  stroke="#2563eb"
+                  strokeWidth={2}
+                  fill="url(#finance-receita-iptv)"
                 />
               </AreaChart>
             </ResponsiveContainer>
@@ -395,6 +412,10 @@ export default function Financeiro() {
               Sem dados de receita suficientes para gerar o gráfico.
             </div>
           )}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-4 text-xs">
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-primary-500" /> Netflix</span>
+          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-blue-500" /> IPTV</span>
         </div>
       </div>
     </motion.div>

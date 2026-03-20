@@ -20,9 +20,10 @@ async function ensureUserStatusColumn(): Promise<void> {
 /** Listar utilizadores (sem password) */
 router.get('/', async (_req, res) => {
   await ensureUserStatusColumn().catch(() => {})
+  await ensureUserWhatsappColumn().catch(() => {})
   const users = await prisma.user.findMany({
     orderBy: { id: 'asc' },
-    select: { id: true, nome: true, email: true, role: true, createdAt: true },
+    select: { id: true, nome: true, email: true, whatsapp: true, role: true, createdAt: true },
   })
   let statusMap: Record<number, string> = {}
   try {
@@ -36,9 +37,17 @@ router.get('/', async (_req, res) => {
   res.json(users.map((u) => ({ ...u, status: statusMap[u.id] ?? 'ativo' })))
 })
 
+/** Garante que a coluna whatsapp existe em User */
+async function ensureUserWhatsappColumn(): Promise<void> {
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "User" ADD COLUMN IF NOT EXISTS whatsapp TEXT
+  `)
+}
+
 /** Criar utilizador (apenas roles operador; nunca criar segundo admin) */
 router.post('/', async (req, res) => {
-  const { nome, email, password, role } = req.body
+  await ensureUserWhatsappColumn().catch(() => {})
+  const { nome, email, whatsapp, password, role } = req.body
   if (!nome || !email || !password) {
     return res.status(400).json({ error: 'Nome, email e senha obrigatórios' })
   }
@@ -51,8 +60,14 @@ router.post('/', async (req, res) => {
   if (existing) return res.status(400).json({ error: 'Email já utilizado' })
   const hash = await bcrypt.hash(password, 10)
   const user = await prisma.user.create({
-    data: { nome: String(nome), email: emailNorm, password: hash, role: r },
-    select: { id: true, nome: true, email: true, role: true, createdAt: true },
+    data: {
+      nome: String(nome),
+      email: emailNorm,
+      whatsapp: whatsapp != null && String(whatsapp).trim() !== '' ? String(whatsapp).trim() : null,
+      password: hash,
+      role: r,
+    },
+    select: { id: true, nome: true, email: true, whatsapp: true, role: true, createdAt: true },
   })
   res.status(201).json(user)
 })
@@ -104,7 +119,7 @@ router.post('/:id/ativar', async (req, res) => {
 /** Atualizar utilizador (não permitir alterar role para admin; não permitir retirar role admin ao único admin) */
 router.patch('/:id', async (req, res) => {
   const id = Number(req.params.id)
-  const { nome, email, role, password } = req.body
+  const { nome, email, whatsapp, role, password } = req.body
   const existing = await prisma.user.findUnique({ where: { id } })
   if (!existing) return res.status(404).json({ error: 'Utilizador não encontrado' })
   const adminsCount = await prisma.user.count({ where: { role: 'admin' } })
@@ -115,7 +130,7 @@ router.patch('/:id', async (req, res) => {
   if (existing.role === 'admin' && adminsCount <= 1 && newRole && newRole !== 'admin') {
     return res.status(400).json({ error: 'Não pode remover o único administrador do sistema.' })
   }
-  const update: { nome?: string; email?: string; password?: string; role?: string } = {}
+  const update: { nome?: string; email?: string; whatsapp?: string | null; password?: string; role?: string } = {}
   if (nome != null) update.nome = String(nome)
   if (email != null) {
     const emailNorm = String(email).trim().toLowerCase()
@@ -123,12 +138,13 @@ router.patch('/:id', async (req, res) => {
     if (dup) return res.status(400).json({ error: 'Email já utilizado' })
     update.email = emailNorm
   }
+  if (whatsapp !== undefined) update.whatsapp = whatsapp != null && String(whatsapp).trim() !== '' ? String(whatsapp).trim() : null
   if (newRole != null && ROLES_OPERADORES.includes(newRole)) update.role = newRole
   if (password != null && String(password).length > 0) update.password = await bcrypt.hash(String(password), 10)
   const user = await prisma.user.update({
     where: { id },
     data: update,
-    select: { id: true, nome: true, email: true, role: true, createdAt: true },
+    select: { id: true, nome: true, email: true, whatsapp: true, role: true, createdAt: true },
   })
   res.json(user)
 })

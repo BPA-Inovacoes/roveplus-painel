@@ -18,15 +18,12 @@ export async function sendWhatsAppMessage(to: string, message: string): Promise<
     return false
   }
   try {
-    const res = await fetch(apiUrl, {
+    // API WhatsApp (whatsapp-web.js): POST /send com { phone, message }
+    const baseUrl = apiUrl.replace(/\/$/, '')
+    const res = await fetch(`${baseUrl}/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to: phone,
-        type: 'text',
-        text: { body: message },
-      }),
+      body: JSON.stringify({ phone, message }),
     })
     return res.ok
   } catch (e) {
@@ -45,6 +42,8 @@ export const templates = {
     `Olá ${nome}! Bem-vindo(a) à Rove+. A sua assinatura renova em ${dataFim}. Qualquer dúvida, estamos à disposição.`,
   lembrete3Dias: (nome: string, dataFim: string) =>
     `Olá ${nome}! A sua assinatura Rove+ renova em 3 dias (${dataFim}). Renove para continuar sem interrupções.`,
+  lembrete7Dias: (nome: string, dataFim: string, dias: number) =>
+    `Olá ${nome}! A sua assinatura Rove+ renova em ${dias} dias (${dataFim}). Renove para continuar sem interrupções.`,
   vencido: (nome: string) =>
     `Olá ${nome}! A sua assinatura Rove+ venceu. Renove para reativar o serviço.`,
   renovado: (nome: string, dataFim: string) =>

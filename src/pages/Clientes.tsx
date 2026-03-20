@@ -29,6 +29,7 @@ interface Client {
   servidorId: number | null
   revendedorId: number | null
   perfil: string | null
+  pin?: string | null
   dataInicio: string
   dataFim: string
   valor: number
@@ -119,6 +120,8 @@ export default function Clientes() {
   const [salaIdSelect, setSalaIdSelect] = useState<number | ''>('')
   const [clientSuspender, setClientSuspender] = useState<Client | null>(null)
   const [clientAtivar, setClientAtivar] = useState<Client | null>(null)
+  const [clientRenovar, setClientRenovar] = useState<Client | null>(null)
+  const [renovarMeses, setRenovarMeses] = useState(1)
   const [editStep, setEditStep] = useState(1)
   const [tablePage, setTablePage] = useState(1)
   const [form, setForm] = useState<Partial<Client>>({
@@ -185,7 +188,7 @@ export default function Clientes() {
     vencidos: filtered.filter((c) => c.status === 'vencido').length,
     vencendo: filtered.filter((c) => {
       const d = daysUntil(c.dataFim)
-      return c.status === 'ativo' && d >= 0 && d <= 3
+      return c.status === 'ativo' && d >= 0 && d <= 7
     }).length,
   }
 
@@ -249,12 +252,16 @@ export default function Clientes() {
     }
   }
 
-  async function renovar(id: number) {
+  async function confirmarRenovar() {
+    if (!clientRenovar) return
+    const meses = Math.min(24, Math.max(1, renovarMeses))
     try {
-      await api.post(`/api/clients/${id}/renovar`, { dias: 30 })
+      await api.post(`/api/clients/${clientRenovar.id}/renovar`, { meses })
+      setClientRenovar(null)
+      setRenovarMeses(1)
       load()
     } catch (e) {
-      showError(e instanceof Error ? e.message : 'Erro')
+      showError(e instanceof Error ? e.message : 'Erro ao renovar cliente')
     }
   }
 
@@ -362,7 +369,7 @@ export default function Clientes() {
             <span className="font-semibold">{stats.ativos}</span> ativos
           </span>
           <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-900/30 border border-amber-700/40 text-amber-300 text-sm">
-            <span className="font-semibold">{stats.vencendo}</span> a vencer (3 dias)
+            <span className="font-semibold">{stats.vencendo}</span> a vencer (7 dias)
           </span>
           <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/30 border border-red-700/40 text-red-300 text-sm">
             <span className="font-semibold">{stats.vencidos}</span> vencidos
@@ -455,6 +462,7 @@ export default function Clientes() {
           <option value="">Qualquer vencimento</option>
           <option value="hoje">Vence hoje</option>
           <option value="3dias">Vence em 3 dias</option>
+          <option value="7dias">Vence em 7 dias</option>
         </select>
         <div className="relative flex-1 min-w-[180px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
@@ -492,6 +500,8 @@ export default function Clientes() {
                   <th className="px-4 py-3.5 font-medium w-12 text-center">Nº</th>
                   <th className="px-4 py-3.5 font-medium">Cliente</th>
                   <th className="px-4 py-3.5 font-medium">Contacto</th>
+                  {tab === 'netflix' && <th className="px-4 py-3.5 font-medium">Perfil</th>}
+                  {tab === 'netflix' && <th className="px-4 py-3.5 font-medium">PIN</th>}
                   <th className="px-4 py-3.5 font-medium">Localização</th>
                   {tab === 'iptv' && (
                     <>
@@ -501,7 +511,7 @@ export default function Clientes() {
                   )}
                   {tab === 'netflix' && <th className="px-4 py-3.5 font-medium">Sala</th>}
                   <th className="px-4 py-3.5 font-medium">Plano</th>
-                  <th className="px-4 py-3.5 font-medium">Vencimento</th>
+                  {tab === 'iptv' && <th className="px-4 py-3.5 font-medium">Data fim</th>}
                   <th className="px-4 py-3.5 font-medium">Valor</th>
                   <th className="px-4 py-3.5 font-medium">Estado</th>
                   <th className="px-4 py-3.5 font-medium text-right">Ações</th>
@@ -510,14 +520,15 @@ export default function Clientes() {
               <tbody className="divide-y divide-netflix-border/80 text-gray-200">
                 {pagedClientes.map((c, idx) => {
                   const days = daysUntil(c.dataFim)
-                  const alert = c.status === 'ativo' && days <= 3 && days >= 0
+                  const alert = c.status === 'ativo' && days <= 7 && days >= 0
+                  const urgent = c.status === 'ativo' && days <= 3 && days >= 0
                   const expired = c.status === 'ativo' && days < 0
                   const rowNum = (tablePageClamped - 1) * ROWS_PER_PAGE + idx + 1
                   return (
                     <tr
                       key={c.id}
                       className={`hover:bg-netflix-hover/80 transition-colors ${
-                        alert ? 'bg-amber-900/15' : expired ? 'bg-red-900/15' : ''
+                        urgent ? 'bg-amber-900/25' : alert ? 'bg-amber-900/15' : expired ? 'bg-red-900/15' : ''
                       }`}
                     >
                       <td className="px-4 py-3 text-center text-gray-400 text-sm">{rowNum}</td>
@@ -535,6 +546,12 @@ export default function Clientes() {
                           {c.whatsapp}
                         </a>
                       </td>
+                      {tab === 'netflix' && (
+                        <td className="px-4 py-3 text-sm text-gray-300">{c.perfil || '—'}</td>
+                      )}
+                      {tab === 'netflix' && (
+                        <td className="px-4 py-3 text-sm text-gray-300">{c.pin || '—'}</td>
+                      )}
                       <td className="px-4 py-3 text-sm text-gray-400">{c.localizacao || '—'}</td>
                       {tab === 'iptv' && (
                         <>
@@ -548,16 +565,18 @@ export default function Clientes() {
                         </td>
                       )}
                       <td className="px-4 py-3 text-sm">{c.plano}</td>
-                      <td className="px-4 py-3">
-                        <span className={`text-sm ${alert ? 'text-amber-400 font-medium' : expired ? 'text-red-400 font-medium' : 'text-gray-300'}`}>
-                          {formatDate(c.dataFim)}
-                          {c.status === 'ativo' && (
-                            <span className="text-gray-500 text-xs ml-1">
-                              ({days > 0 ? `${days}d` : days === 0 ? 'hoje' : 'vencido'})
-                            </span>
-                          )}
-                        </span>
-                      </td>
+                      {tab === 'iptv' && (
+                        <td className="px-4 py-3">
+                          <span className={`text-sm ${urgent ? 'text-amber-300 font-semibold' : alert ? 'text-amber-400 font-medium' : expired ? 'text-red-400 font-medium' : 'text-gray-300'}`}>
+                            {formatDate(c.dataFim)}
+                            {c.status === 'ativo' && (
+                              <span className="text-gray-500 text-xs ml-1">
+                                ({days > 0 ? `${days}d` : days === 0 ? 'hoje' : 'vencido'})
+                              </span>
+                            )}
+                          </span>
+                        </td>
+                      )}
                       <td className="px-4 py-3 text-sm font-medium text-white">{Number(c.valor).toFixed(2)} kz</td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${statusColors[c.status] || 'bg-gray-700 text-gray-300'}`}>
@@ -597,8 +616,11 @@ export default function Clientes() {
                           {c.status === 'ativo' && (
                             <button
                               type="button"
-                              onClick={() => renovar(c.id)}
-                              title="Renovar 30 dias"
+                              onClick={() => {
+                                setClientRenovar(c)
+                                setRenovarMeses(1)
+                              }}
+                              title="Renovar (vencimento dia 11)"
                               className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-green-500/50 bg-green-500/10 text-green-300 hover:bg-green-500/30 hover:text-white transition-colors"
                             >
                               <RefreshCw className="w-4 h-4" />
@@ -736,6 +758,63 @@ export default function Clientes() {
         </div>
       )}
 
+      {/* Modal Renovar cliente (meses de pagamento, vencimento dia 11) */}
+      {clientRenovar && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-netflix-card rounded-2xl shadow-2xl border border-green-500/40 max-w-sm w-full overflow-hidden">
+            <div className="p-6 border-b border-netflix-border/80">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-green-500/20 text-green-400 ring-1 ring-green-500/30">
+                  <RefreshCw className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold text-white">Renovar cliente</h3>
+                  <p className="text-sm text-gray-400 mt-0.5">
+                    <span className="text-white font-medium">{clientRenovar.nome}</span>
+                  </p>
+                  <div className="h-1 w-12 bg-green-500 rounded-full mt-2" />
+                </div>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-gray-500">
+                O vencimento será no dia <span className="text-gray-300 font-medium">11</span> de cada mês. Escolha quantos meses atribuir.
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Meses de pagamento</label>
+                <select
+                  value={renovarMeses}
+                  onChange={(e) => setRenovarMeses(Number(e.target.value))}
+                  className="w-full px-4 py-3 bg-netflix-panel border border-netflix-border rounded-xl text-sm text-white focus:ring-2 focus:ring-green-500/50 focus:border-green-500/50 outline-none transition-colors"
+                >
+                  {Array.from({ length: 24 }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={n}>
+                      {n} {n === 1 ? 'mês' : 'meses'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80">
+              <button
+                type="button"
+                onClick={() => { setClientRenovar(null); setRenovarMeses(1) }}
+                className="flex-1 py-2.5 px-4 border border-netflix-border rounded-xl text-sm font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmarRenovar}
+                className="flex-1 py-2.5 px-4 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 transition-colors shadow-lg shadow-green-900/30"
+              >
+                Renovar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal Atribuir sala (Netflix Plano Room) */}
       {modal === 'sala' && clientSala && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md">
@@ -795,7 +874,7 @@ export default function Clientes() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div
             className={`bg-netflix-card rounded-2xl shadow-2xl border border-netflix-border max-w-md w-full flex flex-col ${
-              (modal === 'edit' && form.servico === 'netflix') || modal === 'new' ? 'max-h-[90vh]' : 'max-h-[90vh] overflow-y-auto'
+              (modal === 'edit' && (form.servico === 'netflix' || form.servico === 'iptv')) || modal === 'new' ? 'max-h-[90vh]' : 'max-h-[90vh] overflow-y-auto'
             }`}
           >
             <div className="p-6 border-b border-netflix-border/80 shrink-0">
@@ -803,7 +882,7 @@ export default function Clientes() {
                 {modal === 'new' ? 'Novo cliente' : 'Editar cliente'}
               </h3>
               <div className="h-1 w-12 bg-primary-500 rounded-full mt-2" />
-              {((modal === 'edit' && form.servico === 'netflix') || modal === 'new') && (
+              {((modal === 'edit' && (form.servico === 'netflix' || form.servico === 'iptv')) || modal === 'new') && (
                 <div className="flex items-center mt-4">
                   {(modal === 'new'
                     ? [
@@ -811,19 +890,28 @@ export default function Clientes() {
                         { step: 2, label: form.servico === 'iptv' ? 'Plano & Servidor' : 'Plano & Sala' },
                         { step: 3, label: form.servico === 'iptv' ? 'Acesso' : 'Perfil & Pagamento' },
                       ]
-                    : [
-                        { step: 1, label: 'Dados' },
-                        { step: 2, label: 'Plano' },
-                        { step: 3, label: 'Perfil' },
-                        { step: 4, label: 'Conclusão' },
-                      ]
-                  ).map(({ step, label }, i) => (
+                    : form.servico === 'iptv'
+                      ? [
+                          { step: 1, label: 'Dados' },
+                          { step: 2, label: 'Plano & Servidor' },
+                          { step: 3, label: 'Acesso' },
+                        ]
+                      : [
+                          { step: 1, label: 'Dados' },
+                          { step: 2, label: 'Plano' },
+                          { step: 3, label: 'Perfil' },
+                          { step: 4, label: 'Conclusão' },
+                        ]
+                  ).map(({ step, label }, i) => {
+                    const totalSteps = modal === 'new' ? 3 : form.servico === 'iptv' ? 3 : 4
+                    const connectorCount = totalSteps - 1
+                    return (
                     <div key={step} className="flex items-center flex-1 last:flex-none">
                       <button
                         type="button"
                         onClick={() => setEditStep(step)}
                         className={`flex flex-col items-center gap-1 group ${
-                          i < (modal === 'new' ? 2 : 3) ? 'flex-1' : ''
+                          i < connectorCount ? 'flex-1' : ''
                         }`}
                       >
                         <span
@@ -845,7 +933,7 @@ export default function Clientes() {
                           {label}
                         </span>
                       </button>
-                      {i < (modal === 'new' ? 2 : 3) && (
+                      {i < connectorCount && (
                         <div
                           className={`flex-1 h-0.5 mx-1 rounded ${
                             editStep > step ? 'bg-primary-500/50' : 'bg-netflix-border'
@@ -853,7 +941,7 @@ export default function Clientes() {
                         />
                       )}
                     </div>
-                  ))}
+                  )})}
                 </div>
               )}
             </div>
@@ -967,6 +1055,16 @@ export default function Clientes() {
                       />
                     </div>
                     <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-0.5">PIN</label>
+                      <input
+                        type="text"
+                        value={form.pin || ''}
+                        onChange={(e) => setForm((f) => ({ ...f, pin: e.target.value }))}
+                        className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                        placeholder="Ex: 1234"
+                      />
+                    </div>
+                    <div>
                       <label className="block text-sm font-medium text-gray-300 mb-0.5">Valor mensal (kz)</label>
                       <input
                         type="number"
@@ -1006,6 +1104,158 @@ export default function Clientes() {
                       <label className="block text-sm font-medium text-gray-300 mb-0.5">
                         {form.salaId ? 'Data fim (da sala)' : 'Data fim'}
                       </label>
+                      <input
+                        type="date"
+                        value={form.dataFim ? String(form.dataFim).slice(0, 10) : ''}
+                        onChange={(e) => setForm((f) => ({ ...f, dataFim: e.target.value }))}
+                        className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-0.5">Estado</label>
+                      <select
+                        value={form.status || 'ativo'}
+                        onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
+                        className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                      >
+                        <option value="ativo">Ativo</option>
+                        <option value="vencido">Vencido</option>
+                        <option value="cancelado">Cancelado</option>
+                      </select>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : modal === 'edit' && form.servico === 'iptv' ? (
+              <div className="p-6 space-y-4 overflow-hidden flex-1 min-h-0">
+                {editStep === 1 && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-0.5">Nome</label>
+                      <input
+                        type="text"
+                        value={form.nome || ''}
+                        onChange={(e) => setForm((f) => ({ ...f, nome: e.target.value }))}
+                        className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-0.5">WhatsApp</label>
+                      <input
+                        type="text"
+                        value={form.whatsapp || ''}
+                        onChange={(e) => setForm((f) => ({ ...f, whatsapp: e.target.value }))}
+                        className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                        placeholder="244 9XX XXX XXX"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-0.5">Localização</label>
+                      <input
+                        type="text"
+                        value={form.localizacao ?? ''}
+                        onChange={(e) => setForm((f) => ({ ...f, localizacao: e.target.value }))}
+                        className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                        placeholder="Ex: Luanda, Benguela..."
+                      />
+                    </div>
+                  </>
+                )}
+                {editStep === 2 && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-0.5">Plano</label>
+                      <select
+                        value={
+                          PLANOS_IPTV.some((p) => p.id === form.plano)
+                            ? form.plano
+                            : form.plano
+                              ? 'outro'
+                              : ''
+                        }
+                        onChange={(e) => {
+                          const v = e.target.value
+                          if (v === 'outro') {
+                            setForm((f) => ({ ...f, plano: 'Outro', valor: f.valor || 0 }))
+                          } else {
+                            const p = PLANOS_IPTV.find((x) => x.id === v)
+                            if (p) setForm((f) => ({ ...f, plano: p.id, valor: p.valor }))
+                          }
+                        }}
+                        className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                      >
+                        <option value="">— Selecione o plano —</option>
+                        {PLANOS_IPTV.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.label}
+                          </option>
+                        ))}
+                        <option value="outro">Outro (a especificar)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-0.5">Servidor</label>
+                      <select
+                        value={form.servidorId ?? ''}
+                        onChange={(e) =>
+                          setForm((f) => ({ ...f, servidorId: e.target.value ? Number(e.target.value) : null }))
+                        }
+                        className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                      >
+                        <option value="">— Nenhum —</option>
+                        {servidores.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.tipo === 'secundario' && s.servidor
+                              ? `${s.nome} (Secundário → ${s.servidor.nome})`
+                              : s.nome}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-0.5">Revendedor</label>
+                      <select
+                        value={form.revendedorId ?? ''}
+                        onChange={(e) =>
+                          setForm((f) => ({ ...f, revendedorId: e.target.value ? Number(e.target.value) : null }))
+                        }
+                        className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                      >
+                        <option value="">— Nenhum —</option>
+                        {revendedores.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.nome}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                )}
+                {editStep === 3 && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-0.5">Nome de utilizador</label>
+                      <input
+                        type="text"
+                        value={form.perfil || ''}
+                        onChange={(e) => setForm((f) => ({ ...f, perfil: e.target.value }))}
+                        className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                        placeholder="Ex: nome de utilizador da linha"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-0.5">Valor mensal (kz)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={form.valor ?? ''}
+                        onChange={(e) => setForm((f) => ({ ...f, valor: Number(e.target.value) || 0 }))}
+                        readOnly={PLANOS_IPTV.some((p) => p.id === form.plano)}
+                        className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none min-h-[42px] [&:read-only]:cursor-default [&:read-only]:opacity-90"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-0.5">Data fim (dia 11 do mês)</label>
                       <input
                         type="date"
                         value={form.dataFim ? String(form.dataFim).slice(0, 10) : ''}
@@ -1239,6 +1489,16 @@ export default function Clientes() {
                         onChange={(e) => setForm((f) => ({ ...f, perfil: e.target.value }))}
                         className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
                         placeholder="Ex: nome do perfil Netflix"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-0.5">PIN</label>
+                      <input
+                        type="text"
+                        value={form.pin || ''}
+                        onChange={(e) => setForm((f) => ({ ...f, pin: e.target.value }))}
+                        className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                        placeholder="Ex: 1234"
                       />
                     </div>
                     <div className="grid grid-cols-2 gap-3">
@@ -1565,7 +1825,7 @@ export default function Clientes() {
               >
                 Cancelar
               </button>
-              {(modal === 'edit' && form.servico === 'netflix') || modal === 'new' ? (
+              {((modal === 'edit' && (form.servico === 'netflix' || form.servico === 'iptv')) || modal === 'new') ? (
                 <>
                   {editStep > 1 && (
                     <button
@@ -1576,7 +1836,7 @@ export default function Clientes() {
                       Anterior
                     </button>
                   )}
-                  {editStep < (modal === 'new' ? 3 : 4) ? (
+                  {editStep < (modal === 'new' ? 3 : (form.servico === 'iptv' ? 3 : 4)) ? (
                     <button
                       type="button"
                       onClick={() => {

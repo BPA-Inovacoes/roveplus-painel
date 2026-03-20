@@ -1,6 +1,12 @@
 {
   "buildCommand": "npm run db:generate && npm run build:api && npm run build",
   "outputDirectory": "dist",
+  "crons": [
+    {
+      "path": "/api/cron/alertas",
+      "schedule": "0 5 * * *"
+    }
+  ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index" },
     { "source": "/(.*)", "destination": "/index.html" }

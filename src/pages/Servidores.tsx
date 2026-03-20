@@ -117,7 +117,13 @@ export default function Servidores() {
           list.map((s) => (
             <div
               key={s.id}
-              className="bg-netflix-card rounded-xl shadow border border-netflix-border p-5 flex items-start justify-between"
+              className={`rounded-xl shadow p-5 flex items-start justify-between ${
+                s.status === 'offline'
+                  ? 'bg-red-900/20 border-2 border-red-500/50'
+                  : s.status === 'instável'
+                    ? 'bg-amber-900/20 border-2 border-amber-500/50'
+                    : 'bg-netflix-card border border-netflix-border'
+              }`}
             >
               <div className="flex items-start gap-3">
                 <div className="p-2 rounded-lg bg-primary-600/20 text-primary-400">

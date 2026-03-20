@@ -13,12 +13,14 @@ import {
   LogOut,
   Menu,
   X,
+  Bell,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 
 const nav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/notificacoes', icon: Bell, label: 'Notificações' },
   { to: '/clientes', icon: Users, label: 'Clientes' },
   { to: '/servidores', icon: Server, label: 'Servidores', roles: ['admin', 'geral', 'iptv', 'suporte'] },
   { to: '/revendedores', icon: Store, label: 'Revendedores IPTV', roles: ['admin', 'geral', 'iptv', 'suporte'] },

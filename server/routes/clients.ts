@@ -9,6 +9,14 @@ const router = Router()
 
 router.use(authMiddleware)
 
+/** Adiciona N meses à data fim atual (mantém o dia; renovar = +1 mês, +2 meses, etc.). */
+function adicionarMesesADataFim(base: Date, meses: number): Date {
+  const d = new Date(base)
+  d.setHours(0, 0, 0, 0)
+  d.setMonth(d.getMonth() + meses)
+  return d
+}
+
 router.get('/', async (req, res) => {
   const { servico, servidorId, status, vencendo, revendedorId } = req.query
   const user = (req as unknown as { user: AuthPayload }).user
@@ -41,6 +49,14 @@ router.get('/', async (req, res) => {
     const in3 = new Date(today)
     in3.setDate(in3.getDate() + 3)
     where.dataFim = { gte: today, lt: in3 }
+    where.status = 'ativo'
+  }
+  if (vencendo === '7dias') {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const in7 = new Date(today)
+    in7.setDate(in7.getDate() + 7)
+    where.dataFim = { gte: today, lte: in7 }
     where.status = 'ativo'
   }
   if (req.query.revendedorId) where.revendedorId = Number(req.query.revendedorId)
@@ -84,6 +100,7 @@ router.post('/', auditLog('create_client', 'client'), async (req, res) => {
       servidorId: body.servidorId ? Number(body.servidorId) : null,
       revendedorId: body.revendedorId ? Number(body.revendedorId) : null,
       perfil: body.perfil || null,
+      pin: body.pin || null,
       iptvUser: body.iptvUser || null,
       iptvPass: body.iptvPass || null,
       iptvMac: body.iptvMac || null,
@@ -118,6 +135,7 @@ router.patch('/:id', auditLog('update_client', 'client'), async (req, res) => {
   if (body.servidorId != null) update.servidorId = body.servidorId ? Number(body.servidorId) : null
   if (body.revendedorId !== undefined) update.revendedorId = body.revendedorId ? Number(body.revendedorId) : null
   if (body.perfil != null) update.perfil = body.perfil
+  if (body.pin !== undefined) update.pin = body.pin || null
   if (body.iptvUser != null) update.iptvUser = body.iptvUser
   if (body.iptvPass != null) update.iptvPass = body.iptvPass
   if (body.iptvMac != null) update.iptvMac = body.iptvMac
@@ -146,18 +164,18 @@ router.post('/:id/renovar', auditLog('renew_client', 'client'), async (req, res)
   if (!client) return res.status(404).json({ error: 'Cliente não encontrado' })
   if (!canAccessServico(user.role, client.servico)) return res.status(403).json({ error: 'Sem acesso a este cliente' })
   if (client.status === 'vencido') return res.status(400).json({ error: 'Cliente vencido. Use Ativar para reativar.' })
-  const { dias, valor } = req.body
-  const diasAdd = Number(dias) || 30
+  const { dias, meses, valor } = req.body
+  const mesesAdd = Number(meses) || (dias ? Math.max(1, Math.round(Number(dias) / 30)) : 1)
   let dataFim: Date
   if (client.salaId && client.servico === 'netflix') {
     const sala = await prisma.sala.findUnique({ where: { id: client.salaId } })
-    dataFim = new Date(sala?.dataFim ?? client.dataFim)
-    dataFim.setDate(dataFim.getDate() + diasAdd)
+    const base = new Date(sala?.dataFim ?? client.dataFim)
+    dataFim = adicionarMesesADataFim(base, mesesAdd)
     await prisma.sala.update({ where: { id: client.salaId }, data: { dataFim } })
     await prisma.client.updateMany({ where: { salaId: client.salaId }, data: { dataFim, status: 'ativo' } })
   } else {
-    dataFim = new Date(client.dataFim)
-    dataFim.setDate(dataFim.getDate() + diasAdd)
+    const base = new Date(client.dataFim)
+    dataFim = adicionarMesesADataFim(base, mesesAdd)
     await prisma.client.update({
       where: { id },
       data: { dataFim, valor: valor != null ? Number(valor) : client.valor, status: 'ativo' },
@@ -201,15 +219,25 @@ router.post('/:id/suspender', auditLog('suspend_client', 'client'), async (req, 
   res.json({ ...updated, valor: Number(updated.valor) })
 })
 
+/** Próximo dia 11 a partir de hoje (para cliente ficar ativo após ativar). */
+function proximoDia11(): Date {
+  const hoje = new Date()
+  hoje.setHours(0, 0, 0, 0)
+  const dia11 = new Date(hoje.getFullYear(), hoje.getMonth(), 11)
+  if (hoje <= dia11) return dia11
+  return new Date(hoje.getFullYear(), hoje.getMonth() + 1, 11)
+}
+
 router.post('/:id/ativar', auditLog('activate_client', 'client'), async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
   const id = Number(req.params.id)
   const existing = await prisma.client.findUnique({ where: { id } })
   if (!existing) return res.status(404).json({ error: 'Cliente não encontrado' })
   if (!canAccessServico(user.role, existing.servico)) return res.status(403).json({ error: 'Sem acesso a este cliente' })
+  const dataFim = proximoDia11()
   const updated = await prisma.client.update({
     where: { id },
-    data: { status: 'ativo' },
+    data: { status: 'ativo', dataFim },
   })
   res.json({ ...updated, valor: Number(updated.valor) })
 })

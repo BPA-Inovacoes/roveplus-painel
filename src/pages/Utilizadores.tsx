@@ -10,6 +10,7 @@ export interface UserRow {
   id: number
   nome: string
   email: string
+  whatsapp?: string | null
   role: string
   status?: string
   createdAt: string
@@ -64,7 +65,7 @@ export default function Utilizadores() {
   const [error, setError] = useState<string | null>(null)
   const [modal, setModal] = useState<'create' | 'edit' | null>(null)
   const [editing, setEditing] = useState<UserRow | null>(null)
-  const [form, setForm] = useState({ nome: '', email: '', password: '', role: 'geral' })
+  const [form, setForm] = useState({ nome: '', email: '', whatsapp: '', password: '', role: 'geral' })
   const [submitLoading, setSubmitLoading] = useState(false)
   const [userToDelete, setUserToDelete] = useState<UserRow | null>(null)
   const [userToSuspender, setUserToSuspender] = useState<UserRow | null>(null)
@@ -91,13 +92,13 @@ export default function Utilizadores() {
   }, [])
 
   const openCreate = () => {
-    setForm({ nome: '', email: '', password: '', role: 'geral' })
+    setForm({ nome: '', email: '', whatsapp: '', password: '', role: 'geral' })
     setEditing(null)
     setModal('create')
   }
 
   const openEdit = (u: UserRow) => {
-    setForm({ nome: u.nome, email: u.email, password: '', role: u.role === 'admin' ? 'geral' : u.role })
+    setForm({ nome: u.nome, email: u.email, whatsapp: u.whatsapp ?? '', password: '', role: u.role === 'admin' ? 'geral' : u.role })
     setEditing(u)
     setModal('edit')
   }
@@ -105,7 +106,7 @@ export default function Utilizadores() {
   const closeModal = () => {
     setModal(null)
     setEditing(null)
-    setForm({ nome: '', email: '', password: '', role: 'geral' })
+    setForm({ nome: '', email: '', whatsapp: '', password: '', role: 'geral' })
   }
 
   const handleCreate = (e: React.FormEvent) => {
@@ -118,6 +119,8 @@ export default function Utilizadores() {
     setError(null)
     api
       .post<UserRow>('/api/users', {
+        ...form,
+        whatsapp: form.whatsapp?.trim() || undefined,
         nome: form.nome.trim(),
         email: form.email.trim(),
         password: form.password,
@@ -140,6 +143,7 @@ export default function Utilizadores() {
       .patch<UserRow>(`/api/users/${editing.id}`, {
         nome: form.nome.trim(),
         email: form.email.trim(),
+        whatsapp: form.whatsapp?.trim() || null,
         role: form.role,
       })
       .then(() => {
@@ -305,6 +309,9 @@ export default function Utilizadores() {
                   Utilizador
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">
+                  WhatsApp
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">
                   Perfil
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">
@@ -329,6 +336,9 @@ export default function Utilizadores() {
                         <span className="font-medium">{u.nome}</span>
                         <span className="text-xs text-gray-400">{u.email}</span>
                       </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-300">
+                      {u.whatsapp ? u.whatsapp : '—'}
                     </td>
                     <td className="px-4 py-3">
                       <span
@@ -626,6 +636,14 @@ export default function Utilizadores() {
                   className="w-full bg-netflix-panel border border-netflix-border rounded-lg px-3 py-2 text-white"
                   required
                 />
+                <label className="block text-sm font-medium text-gray-300">WhatsApp <span className="text-gray-500">(opcional)</span></label>
+                <input
+                  type="text"
+                  value={form.whatsapp}
+                  onChange={(e) => setForm((f) => ({ ...f, whatsapp: e.target.value }))}
+                  placeholder="ex: +351 912 345 678"
+                  className="w-full bg-netflix-panel border border-netflix-border rounded-lg px-3 py-2 text-white"
+                />
                 <label className="block text-sm font-medium text-gray-300">Senha</label>
                 <input
                   type="password"
@@ -685,6 +703,14 @@ export default function Utilizadores() {
                   onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
                   className="w-full bg-netflix-panel border border-netflix-border rounded-lg px-3 py-2 text-white"
                   required
+                />
+                <label className="block text-sm font-medium text-gray-300">WhatsApp <span className="text-gray-500">(opcional)</span></label>
+                <input
+                  type="text"
+                  value={form.whatsapp}
+                  onChange={(e) => setForm((f) => ({ ...f, whatsapp: e.target.value }))}
+                  placeholder="ex: +351 912 345 678"
+                  className="w-full bg-netflix-panel border border-netflix-border rounded-lg px-3 py-2 text-white"
                 />
                 <label className="block text-sm font-medium text-gray-300">Perfil</label>
                 <select

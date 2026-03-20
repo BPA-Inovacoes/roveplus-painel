@@ -13,6 +13,7 @@ import Audit from './pages/Audit'
 import Utilizadores from './pages/Utilizadores'
 import Financeiro from './pages/Financeiro'
 import Manual from './pages/Manual'
+import Notificacoes from './pages/Notificacoes'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -50,6 +51,7 @@ function App() {
         <Route path="indicacoes" element={<Indicacoes />} />
         <Route path="utilizadores" element={<Utilizadores />} />
         <Route path="financeiro" element={<Financeiro />} />
+        <Route path="notificacoes" element={<Notificacoes />} />
         <Route path="audit" element={<Audit />} />
         <Route path="manual" element={<Manual />} />
       </Route>

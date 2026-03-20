@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
-import { authMiddleware, getRoleServicoFilter, canAccessServidores } from '../middleware/auth.js'
+import { authMiddleware, getRoleServicoFilter, canAccessServidores, canAccessSalas } from '../middleware/auth.js'
 import type { AuthPayload } from '../middleware/auth.js'
 
 const router = Router()
@@ -32,6 +32,9 @@ router.get('/', async (req, res) => {
     status: 'ativo' as const,
     dataFim: { gte: today, lte: in7Days },
   }
+  // Salas a vencer (pagamento/data fim nos próximos 7 dias) e já vencidas – antecipar alertas
+  const salasVencendoWhere = { status: 'ativo' as const, dataFim: { gte: today, lte: in7Days } }
+  const salasVencidasWhere = { status: 'ativo' as const, dataFim: { lt: today } }
   const inicioMes = new Date(today.getFullYear(), today.getMonth(), 1)
   const fimMes = new Date(today.getFullYear(), today.getMonth() + 1, 0)
   const inicioMesAnterior = new Date(today.getFullYear(), today.getMonth() - 1, 1)
@@ -60,6 +63,8 @@ router.get('/', async (req, res) => {
     clients,
     vencidosValores,
     servidoresList,
+    salasVencendo,
+    salasVencidas,
   ] = await Promise.all([
     roleFilter === 'iptv' ? 0 : prisma.client.count({ where: clientWhereNetflix }),
     roleFilter === 'netflix' ? 0 : prisma.client.count({ where: clientWhereIptv }),
@@ -108,6 +113,8 @@ router.get('/', async (req, res) => {
     canAccessServidores(user.role)
       ? prisma.servidor.findMany({ select: { id: true, nome: true } })
       : [],
+    canAccessSalas(user.role) ? prisma.sala.count({ where: salasVencendoWhere }) : 0,
+    canAccessSalas(user.role) ? prisma.sala.count({ where: salasVencidasWhere }) : 0,
   ])
 
   // Receita do mês = soma dos valores dos clientes cujo vencimento (dataFim) cai no mês atual (dia 1 a fim do mês)
@@ -154,22 +161,25 @@ router.get('/', async (req, res) => {
     .map(([id, v]) => ({ servidorId: id, servidorNome: v.nome, receita: Math.round(v.receita * 100) / 100, clientes: v.clientes }))
     .filter((r) => r.clientes > 0)
 
-  // Últimos 6 meses: receita (soma de valor onde dataFim cai no mês)
-  const receitaUltimosMeses: { mes: string; valor: number }[] = []
+  // Últimos 6 meses: receita (soma de valor onde dataFim cai no mês) – total e por serviço
+  const receitaUltimosMeses: { mes: string; valor: number; valorNetflix?: number; valorIptv?: number }[] = []
   const monthNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
   for (let i = 5; i >= 0; i--) {
     const d = new Date(today.getFullYear(), today.getMonth() - i, 1)
     const start = new Date(d.getFullYear(), d.getMonth(), 1)
     const end = new Date(d.getFullYear(), d.getMonth() + 1, 0)
-    const total = clients
-      .filter((c) => {
-        const df = new Date(c.dataFim)
-        return df >= start && df <= end
-      })
-      .reduce((s, c) => s + Number(c.valor), 0)
+    const noMes = clients.filter((c) => {
+      const df = new Date(c.dataFim)
+      return df >= start && df <= end
+    })
+    const total = noMes.reduce((s, c) => s + Number(c.valor), 0)
+    const totalNetflixMes = noMes.filter((c) => c.servico === 'netflix').reduce((s, c) => s + Number(c.valor), 0)
+    const totalIptvMes = noMes.filter((c) => c.servico === 'iptv').reduce((s, c) => s + Number(c.valor), 0)
     receitaUltimosMeses.push({
       mes: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
       valor: Math.round(total * 100) / 100,
+      valorNetflix: Math.round(totalNetflixMes * 100) / 100,
+      valorIptv: Math.round(totalIptvMes * 100) / 100,
     })
   }
 
@@ -219,6 +229,8 @@ router.get('/', async (req, res) => {
     totalRevendedores: totalRevendedores ?? 0,
     clientesComRevendedor: clientesComRevendedor ?? 0,
     receitaUltimosMeses,
+    salasVencendo: salasVencendo ?? 0,
+    salasVencidas: salasVencidas ?? 0,
   })
 })
 

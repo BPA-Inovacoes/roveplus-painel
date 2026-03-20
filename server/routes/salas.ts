@@ -124,6 +124,47 @@ router.post('/:id/ativar', auditLog('activate_sala', 'sala'), async (req, res) =
   }
 })
 
+router.post('/:id/pagar-mes', auditLog('pay_sala_month', 'sala'), async (req, res) => {
+  const user = (req as unknown as { user: AuthPayload }).user
+  if (!canAccessSalas(user.role)) return res.status(403).json({ error: 'Sem acesso a salas' })
+  const id = Number(req.params.id)
+  const existing = await prisma.sala.findUnique({ where: { id } })
+  if (!existing) return res.status(404).json({ error: 'Sala não encontrada' })
+
+  const baseDate = existing.dataFim && existing.dataFim > new Date() ? existing.dataFim : new Date()
+  const nextMonth = new Date(baseDate.getTime())
+  nextMonth.setMonth(nextMonth.getMonth() + 1)
+
+  const sala = await prisma.sala.update({
+    where: { id },
+    data: { dataFim: nextMonth },
+  })
+
+  await prisma.client.updateMany({
+    where: { salaId: id },
+    data: { dataFim: nextMonth },
+  })
+
+  const countResult = await prisma.$queryRawUnsafe<Array<{ count: number }>>(
+    'SELECT COUNT(*)::int as count FROM clients WHERE sala_id = $1',
+    id
+  )
+  const totalClientes = countResult[0]?.count ?? 0
+
+  let statusVal = 'ativo'
+  try {
+    const row = await prisma.$queryRawUnsafe<Array<{ status: string }>>(
+      'SELECT status FROM salas WHERE id = $1',
+      id
+    ).then((r) => r[0])
+    statusVal = row?.status ?? 'ativo'
+  } catch {
+    // coluna status pode não existir
+  }
+
+  res.json({ ...sala, status: statusVal, totalClientes })
+})
+
 router.get('/:id', async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
   if (!canAccessSalas(user.role)) return res.status(403).json({ error: 'Sem acesso a salas' })

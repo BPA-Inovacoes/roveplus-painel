@@ -27,6 +27,7 @@ import {
   Store,
   CalendarClock,
   LayoutDashboard,
+  LayoutGrid,
 } from 'lucide-react'
 import { api } from '../api/client'
 import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
@@ -51,6 +52,8 @@ interface DashboardData {
   totalRevendedores?: number
   clientesComRevendedor?: number
   receitaUltimosMeses?: { mes: string; valor: number }[]
+  salasVencendo?: number
+  salasVencidas?: number
 }
 
 const CHART_COLORS = {
@@ -202,6 +205,20 @@ export default function Dashboard() {
           </span>
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-800/20 border border-amber-600/40 text-amber-200/90 text-sm">
             <span className="font-semibold">{data?.vencendoEm7Dias ?? 0}</span> em 7 dias
+          </span>
+          <ChevronRight className="w-4 h-4 text-gray-500 group-hover:text-primary-400" />
+        </Link>
+        <Link
+          to="/salas"
+          className="flex flex-wrap items-center gap-2 px-4 py-3 rounded-xl bg-netflix-card/60 border border-netflix-border/80 hover:border-primary-500/50 transition-colors group"
+        >
+          <span className="text-xs font-medium text-gray-400 uppercase tracking-wider group-hover:text-gray-300">Salas Netflix</span>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-900/30 border border-amber-700/40 text-amber-300 text-sm">
+            <LayoutGrid className="w-3.5 h-3.5" />
+            <span className="font-semibold">{data?.salasVencendo ?? 0}</span> a vencer (7 dias)
+          </span>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-900/30 border border-red-700/40 text-red-300 text-sm">
+            <span className="font-semibold">{data?.salasVencidas ?? 0}</span> vencidas
           </span>
           <ChevronRight className="w-4 h-4 text-gray-500 group-hover:text-primary-400" />
         </Link>

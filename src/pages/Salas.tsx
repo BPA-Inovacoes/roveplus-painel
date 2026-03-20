@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, Edit2, Trash2, LayoutGrid, AlertTriangle, CheckCircle, Eye, EyeOff } from 'lucide-react'
+import { Plus, Edit2, Trash2, LayoutGrid, AlertTriangle, CheckCircle, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { api } from '../api/client'
 import { useAlert } from '../contexts/AlertContext'
 import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
@@ -17,7 +17,7 @@ interface Sala {
 }
 
 export default function Salas() {
-  const { showError, showWarning } = useAlert()
+  const { showError, showWarning, showInfo } = useAlert()
   const [list, setList] = useState<Sala[]>([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState<'new' | 'edit' | null>(null)
@@ -30,6 +30,15 @@ export default function Salas() {
   const totalTablePages = Math.max(1, Math.ceil(list.length / ROWS_PER_PAGE))
   const tablePageClamped = Math.min(tablePage, totalTablePages)
   const pagedList = list.slice((tablePageClamped - 1) * ROWS_PER_PAGE, tablePageClamped * ROWS_PER_PAGE)
+
+  function daysUntilSala(dateStr: string | null): number | null {
+    if (!dateStr) return null
+    const d = new Date(dateStr)
+    d.setHours(0, 0, 0, 0)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    return Math.ceil((d.getTime() - today.getTime()) / (24 * 60 * 60 * 1000))
+  }
 
   function load() {
     setLoading(true)
@@ -109,6 +118,16 @@ export default function Salas() {
     }
   }
 
+  async function pagarMes(sala: Sala) {
+    try {
+      await api.post(`/api/salas/${sala.id}/pagar-mes`, {})
+      showInfo('Sala renovada por mais 1 mês.')
+      load()
+    } catch (e) {
+      showError(e instanceof Error ? e.message : 'Erro ao renovar sala')
+    }
+  }
+
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -154,8 +173,18 @@ export default function Salas() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-netflix-border/80 text-gray-200">
-                {pagedList.map((s, idx) => (
-                  <tr key={s.id} className="hover:bg-netflix-hover/80 transition-colors">
+                {pagedList.map((s, idx) => {
+                  const days = daysUntilSala(s.dataFim)
+                  const salaVencendo = days !== null && days >= 0 && days <= 7
+                  const salaUrgente = days !== null && days >= 0 && days <= 3
+                  const salaVencida = days !== null && days < 0 && (s.status || 'ativo') === 'ativo'
+                  return (
+                  <tr
+                    key={s.id}
+                    className={`hover:bg-netflix-hover/80 transition-colors ${
+                      salaUrgente ? 'bg-amber-900/25' : salaVencendo ? 'bg-amber-900/15' : salaVencida ? 'bg-red-900/15' : ''
+                    }`}
+                  >
                     <td className="px-4 py-3 text-center text-gray-400 text-sm">{(tablePageClamped - 1) * ROWS_PER_PAGE + idx + 1}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
@@ -174,8 +203,15 @@ export default function Salas() {
                     <td className="px-4 py-3 text-center">
                       <span className="font-medium text-white">{s.totalClientes}</span>
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-400">
-                      {s.dataFim ? new Date(s.dataFim).toLocaleDateString('pt-BR') : '—'}
+                    <td className="px-4 py-3">
+                      <span className={`text-sm ${salaUrgente ? 'text-amber-300 font-semibold' : salaVencendo ? 'text-amber-400 font-medium' : salaVencida ? 'text-red-400 font-medium' : 'text-gray-400'}`}>
+                        {s.dataFim ? new Date(s.dataFim).toLocaleDateString('pt-BR') : '—'}
+                        {days !== null && (s.status || 'ativo') === 'ativo' && (
+                          <span className="text-gray-500 text-xs ml-1">
+                            ({days > 0 ? `vence em ${days}d` : days === 0 ? 'vence hoje' : 'vencido'})
+                          </span>
+                        )}
+                      </span>
                     </td>
                     <td className="px-4 py-3">
                       <span
@@ -191,6 +227,14 @@ export default function Salas() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => pagarMes(s)}
+                          title="Pagar +1 mês"
+                          className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-emerald-500/60 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/30 hover:text-white shadow-sm shadow-emerald-900/40 transition-colors"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                        </button>
                         {(s.status || 'ativo') === 'ativo' ? (
                           <button
                             type="button"
@@ -241,7 +285,8 @@ export default function Salas() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>
