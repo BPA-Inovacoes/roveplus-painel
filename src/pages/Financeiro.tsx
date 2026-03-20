@@ -9,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { DollarSign, LayoutDashboard, CalendarClock, TrendingUp, Tv, Server, Wallet } from 'lucide-react'
+import { DollarSign, LayoutDashboard, CalendarClock, TrendingUp, Tv, Server } from 'lucide-react'
 import { api } from '../api/client'
 import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
 
@@ -385,7 +385,12 @@ export default function Financeiro() {
                     color: '#f3f4f6',
                   }}
                   labelStyle={{ color: '#9ca3af' }}
-                  formatter={(value: number | undefined, name: string) => [`${Number(value ?? 0).toFixed(2)} kz`, name === 'valorNetflix' ? 'Netflix' : name === 'valorIptv' ? 'IPTV' : 'Total']}
+                  formatter={(value: number | undefined, name: string | undefined) => {
+                    const labelValue = `${Number(value ?? 0).toFixed(2)} kz`
+                    const serieLabel =
+                      name === 'valorNetflix' ? 'Netflix' : name === 'valorIptv' ? 'IPTV' : 'Total'
+                    return [labelValue, serieLabel]
+                  }}
                 />
                 <Area
                   type="monotone"
