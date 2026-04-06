@@ -51,6 +51,8 @@ model Client {
   sala         Sala?     @relation(fields: [salaId], references: [id])
   status        String    @default("ativo") // ativo | vencido | cancelado
   indicacoes    Int       @default(0)       // total de indicações deste cliente
+  whatsappNotificadoVencimentoAt DateTime? @map("whatsapp_notificado_vencimento_at")
+  portalPinHash String? @map("portal_pin_hash") // PIN bcrypt para login em /cliente
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 

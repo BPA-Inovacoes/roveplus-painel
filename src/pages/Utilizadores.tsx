@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
-import { Navigate } from 'react-router-dom'
-import { Edit2, Trash2, KeyRound, UserCog, AlertTriangle, CheckCircle } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, Navigate } from 'react-router-dom'
+import { Edit2, Trash2, KeyRound, UserCog, AlertTriangle, CheckCircle, Smartphone, ExternalLink, Search } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useAlert } from '../contexts/AlertContext'
 import { api } from '../api/client'
@@ -14,6 +14,15 @@ export interface UserRow {
   role: string
   status?: string
   createdAt: string
+}
+
+interface ClientAccessRow {
+  id: number
+  nome: string
+  whatsapp: string
+  servico: string
+  status: string
+  areaClienteAtiva?: boolean
 }
 
 const ROLES_OPERADORES = [
@@ -57,9 +66,15 @@ function formatDate(date: string) {
   return new Date(date).toLocaleDateString('pt-BR')
 }
 
+const SERVICO_LABEL: Record<string, string> = {
+  iptv: 'IPTV',
+  netflix: 'Netflix',
+}
+
 export default function Utilizadores() {
   const { user } = useAuth()
-  const { showError, showWarning } = useAlert()
+  const { showError, showWarning, showInfo } = useAlert()
+  const [section, setSection] = useState<'operadores' | 'clientes'>('operadores')
   const [users, setUsers] = useState<UserRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -73,6 +88,15 @@ export default function Utilizadores() {
   const [userToResetPassword, setUserToResetPassword] = useState<UserRow | null>(null)
   const [resetPasswordForm, setResetPasswordForm] = useState({ password: '', confirm: '' })
   const [tablePage, setTablePage] = useState(1)
+
+  const [clients, setClients] = useState<ClientAccessRow[]>([])
+  const [clientsLoading, setClientsLoading] = useState(false)
+  const [clientSearch, setClientSearch] = useState('')
+  const [portalFilter, setPortalFilter] = useState<'todos' | 'com' | 'sem'>('todos')
+  const [clientTablePage, setClientTablePage] = useState(1)
+  const [clientForPin, setClientForPin] = useState<ClientAccessRow | null>(null)
+  const [pinForm, setPinForm] = useState({ pin: '', confirm: '' })
+  const [clientToRevoke, setClientToRevoke] = useState<ClientAccessRow | null>(null)
 
   const totalTablePages = Math.max(1, Math.ceil(users.length / ROWS_PER_PAGE))
   const tablePageClamped = Math.min(tablePage, totalTablePages)
@@ -90,6 +114,99 @@ export default function Utilizadores() {
   useEffect(() => {
     load()
   }, [])
+
+  useEffect(() => {
+    if (section !== 'clientes') return
+    let cancelled = false
+    setClientsLoading(true)
+    api
+      .get<ClientAccessRow[]>('/api/clients')
+      .then((data) => {
+        if (!cancelled) setClients(data)
+      })
+      .catch((e) => {
+        if (!cancelled) showError(e instanceof Error ? e.message : 'Erro ao carregar clientes')
+      })
+      .finally(() => {
+        if (!cancelled) setClientsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [section, showError])
+
+  const filteredClients = useMemo(() => {
+    const q = clientSearch.trim().toLowerCase()
+    return clients.filter((c) => {
+      if (portalFilter === 'com' && !c.areaClienteAtiva) return false
+      if (portalFilter === 'sem' && c.areaClienteAtiva) return false
+      if (!q) return true
+      return (
+        c.nome.toLowerCase().includes(q) ||
+        String(c.whatsapp).toLowerCase().includes(q)
+      )
+    })
+  }, [clients, clientSearch, portalFilter])
+
+  const totalClientPages = Math.max(1, Math.ceil(filteredClients.length / ROWS_PER_PAGE))
+  const clientPageClamped = Math.min(clientTablePage, totalClientPages)
+  const pagedClients = filteredClients.slice(
+    (clientPageClamped - 1) * ROWS_PER_PAGE,
+    clientPageClamped * ROWS_PER_PAGE
+  )
+
+  useEffect(() => {
+    setClientTablePage(1)
+  }, [clientSearch, portalFilter])
+
+  async function confirmarPinCliente() {
+    if (!clientForPin) return
+    const p = pinForm.pin.trim()
+    const c = pinForm.confirm.trim()
+    if (p.length < 4) {
+      showWarning('O PIN da área cliente deve ter pelo menos 4 caracteres.')
+      return
+    }
+    if (p !== c) {
+      showWarning('Os PINs não coincidem.')
+      return
+    }
+    setSubmitLoading(true)
+    try {
+      await api.patch(`/api/clients/${clientForPin.id}`, { portalPin: p })
+      setClients((prev) =>
+        prev.map((x) =>
+          x.id === clientForPin.id ? { ...x, areaClienteAtiva: true } : x
+        )
+      )
+      setClientForPin(null)
+      setPinForm({ pin: '', confirm: '' })
+      showInfo('PIN da área cliente atualizado.')
+    } catch (e) {
+      showError(e instanceof Error ? e.message : 'Erro ao guardar PIN')
+    } finally {
+      setSubmitLoading(false)
+    }
+  }
+
+  async function confirmarRevogarPortal() {
+    if (!clientToRevoke) return
+    setSubmitLoading(true)
+    try {
+      await api.patch(`/api/clients/${clientToRevoke.id}`, { portalPin: '' })
+      setClients((prev) =>
+        prev.map((x) =>
+          x.id === clientToRevoke.id ? { ...x, areaClienteAtiva: false } : x
+        )
+      )
+      setClientToRevoke(null)
+      showInfo('Acesso à área cliente revogado.')
+    } catch (e) {
+      showError(e instanceof Error ? e.message : 'Erro ao revogar')
+    } finally {
+      setSubmitLoading(false)
+    }
+  }
 
   const openCreate = () => {
     setForm({ nome: '', email: '', whatsapp: '', password: '', role: 'geral' })
@@ -246,6 +363,11 @@ export default function Utilizadores() {
     suspensos: users.filter((u) => u.status === 'suspenso').length,
   }
 
+  const clientPortalStats = {
+    total: clients.length,
+    comPortal: clients.filter((c) => c.areaClienteAtiva).length,
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4">
@@ -255,50 +377,101 @@ export default function Utilizadores() {
             Utilizadores
           </h1>
           <p className="text-sm text-gray-400 mt-1">
-            Gestão dos acessos ao painel. Apenas o administrador pode criar e editar utilizadores.
+            {section === 'operadores'
+              ? 'Gestão dos acessos ao painel interno e da área do cliente final (/cliente). Apenas o administrador pode alterar estas definições.'
+              : 'Quem pode entrar em /cliente com WhatsApp + PIN. O PIN é definido aqui ou na ficha do cliente em Clientes.'}
           </p>
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-netflix-panel/80 border border-netflix-border/60 text-gray-300 text-sm">
-              <span className="font-semibold text-white">{stats.total}</span> total
-            </span>
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-900/30 border border-amber-700/40 text-amber-300 text-sm">
-              <span className="font-semibold">{stats.administradores}</span> administradores
-            </span>
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-900/30 border border-sky-700/40 text-sky-300 text-sm">
-              <span className="font-semibold">{stats.operadores}</span> operadores
-            </span>
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-900/30 border border-green-700/40 text-green-300 text-sm">
-              <span className="font-semibold">{stats.ativos}</span> ativos
-            </span>
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-900/30 border border-amber-700/40 text-amber-300 text-sm">
-              <span className="font-semibold">{stats.suspensos}</span> suspensos
-            </span>
-          </div>
+
+        <div className="flex flex-wrap gap-2 border-b border-netflix-border/60 pb-3">
           <button
             type="button"
-            onClick={openCreate}
-            className="flex items-center gap-2 py-2 px-4 bg-primary-600 text-white rounded-lg hover:bg-primary-700 text-sm font-medium shadow-lg shadow-primary-900/30 shrink-0"
+            onClick={() => setSection('operadores')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              section === 'operadores'
+                ? 'bg-primary-600 text-white shadow-lg shadow-primary-900/30'
+                : 'bg-netflix-panel/80 text-gray-300 border border-netflix-border/60 hover:bg-netflix-hover'
+            }`}
           >
-            <span className="text-base leading-none">＋</span>
-            Novo utilizador
+            <UserCog className="w-4 h-4 shrink-0" />
+            Operadores do painel
+          </button>
+          <button
+            type="button"
+            onClick={() => setSection('clientes')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              section === 'clientes'
+                ? 'bg-primary-600 text-white shadow-lg shadow-primary-900/30'
+                : 'bg-netflix-panel/80 text-gray-300 border border-netflix-border/60 hover:bg-netflix-hover'
+            }`}
+          >
+            <Smartphone className="w-4 h-4 shrink-0" />
+            Acesso clientes (/cliente)
           </button>
         </div>
+
+        {section === 'operadores' ? (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-netflix-panel/80 border border-netflix-border/60 text-gray-300 text-sm">
+                <span className="font-semibold text-white">{stats.total}</span> total
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-900/30 border border-amber-700/40 text-amber-300 text-sm">
+                <span className="font-semibold">{stats.administradores}</span> administradores
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-900/30 border border-sky-700/40 text-sky-300 text-sm">
+                <span className="font-semibold">{stats.operadores}</span> operadores
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-900/30 border border-green-700/40 text-green-300 text-sm">
+                <span className="font-semibold">{stats.ativos}</span> ativos
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-900/30 border border-amber-700/40 text-amber-300 text-sm">
+                <span className="font-semibold">{stats.suspensos}</span> suspensos
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={openCreate}
+              className="flex items-center gap-2 py-2 px-4 bg-primary-600 text-white rounded-lg hover:bg-primary-700 text-sm font-medium shadow-lg shadow-primary-900/30 shrink-0"
+            >
+              <span className="text-base leading-none">＋</span>
+              Novo utilizador
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-netflix-panel/80 border border-netflix-border/60 text-gray-300 text-sm">
+                <span className="font-semibold text-white">{clientPortalStats.total}</span> clientes
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-900/30 border border-emerald-700/40 text-emerald-300 text-sm">
+                <span className="font-semibold">{clientPortalStats.comPortal}</span> com área /cliente ativa
+              </span>
+            </div>
+            <Link
+              to="/clientes"
+              className="inline-flex items-center gap-2 py-2 px-4 rounded-lg border border-netflix-border/60 bg-netflix-panel/80 text-gray-200 text-sm hover:bg-netflix-hover transition-colors"
+            >
+              Abrir CRM Clientes
+              <ExternalLink className="w-4 h-4" />
+            </Link>
+          </div>
+        )}
       </div>
 
-      {error && (
+      {error && section === 'operadores' && (
         <div className="mb-4 p-3 bg-red-900/50 text-red-300 rounded-lg border border-red-800" role="alert">
           {error}
         </div>
       )}
 
-      {loading ? (
-        <div className="flex justify-center py-12">
-          <div className="animate-spin rounded-full h-10 w-10 border-2 border-primary-600 border-t-transparent" />
-        </div>
-      ) : (
-        <div className="bg-netflix-card/80 rounded-xl border border-netflix-border/80 shadow-lg shadow-black/40 overflow-hidden">
+      {section === 'operadores' &&
+        (loading ? (
+          <div className="flex justify-center py-12">
+            <div className="animate-spin rounded-full h-10 w-10 border-2 border-primary-600 border-t-transparent" />
+          </div>
+        ) : (
+          <div className="bg-netflix-card/80 rounded-xl border border-netflix-border/80 shadow-lg shadow-black/40 overflow-hidden">
           <table className="min-w-full divide-y divide-netflix-border/80">
             <thead className="bg-netflix-panel/80">
               <tr>
@@ -427,7 +600,128 @@ export default function Utilizadores() {
           </table>
           <TablePagination totalItems={users.length} currentPage={tablePageClamped} onPageChange={setTablePage} />
         </div>
-      )}
+        ))}
+
+      {section === 'clientes' &&
+        (clientsLoading ? (
+          <div className="flex justify-center py-12">
+            <div className="animate-spin rounded-full h-10 w-10 border-2 border-primary-600 border-t-transparent" />
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex flex-col lg:flex-row gap-3 lg:items-center lg:justify-between">
+              <div className="relative flex-1 max-w-md">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+                <input
+                  type="search"
+                  value={clientSearch}
+                  onChange={(e) => setClientSearch(e.target.value)}
+                  placeholder="Pesquisar por nome ou WhatsApp…"
+                  className="w-full pl-10 pr-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500"
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {(['todos', 'com', 'sem'] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => setPortalFilter(f)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                      portalFilter === f
+                        ? 'bg-primary-600 border-primary-500 text-white'
+                        : 'bg-netflix-panel/80 border-netflix-border/60 text-gray-300 hover:bg-netflix-hover'
+                    }`}
+                  >
+                    {f === 'todos' ? 'Todos' : f === 'com' ? 'Com /cliente' : 'Sem /cliente'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="bg-netflix-card/80 rounded-xl border border-netflix-border/80 shadow-lg shadow-black/40 overflow-hidden">
+              <table className="min-w-full divide-y divide-netflix-border/80">
+                <thead className="bg-netflix-panel/80">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">Cliente</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">WhatsApp</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">Serviço</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">Estado</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">Área /cliente</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wide">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-netflix-border/80">
+                  {pagedClients.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500">
+                        Nenhum cliente corresponde aos filtros.
+                      </td>
+                    </tr>
+                  ) : (
+                    pagedClients.map((c) => (
+                      <tr key={c.id} className="hover:bg-netflix-hover/80 transition-colors">
+                        <td className="px-4 py-3 text-sm text-white font-medium">{c.nome}</td>
+                        <td className="px-4 py-3 text-sm text-gray-300 font-mono">{c.whatsapp || '—'}</td>
+                        <td className="px-4 py-3 text-sm text-gray-300">{SERVICO_LABEL[c.servico] ?? c.servico}</td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
+                              c.status === 'ativo'
+                                ? 'bg-green-900/50 text-green-300'
+                                : c.status === 'vencido'
+                                  ? 'bg-red-900/50 text-red-300'
+                                  : 'bg-gray-700 text-gray-300'
+                            }`}
+                          >
+                            {c.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          {c.areaClienteAtiva ? (
+                            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-300">
+                              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                              Ativo
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-500">Sem PIN</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-1 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setClientForPin(c)
+                                setPinForm({ pin: '', confirm: '' })
+                              }}
+                              className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-primary-500/50 bg-primary-500/10 text-primary-300 hover:bg-primary-500/30 text-xs font-medium"
+                            >
+                              <KeyRound className="w-3.5 h-3.5 mr-1" />
+                              PIN
+                            </button>
+                            {c.areaClienteAtiva && (
+                              <button
+                                type="button"
+                                onClick={() => setClientToRevoke(c)}
+                                className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-amber-500/50 bg-amber-500/10 text-amber-300 hover:bg-amber-500/30 text-xs font-medium"
+                              >
+                                Revogar
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+              <TablePagination
+                totalItems={filteredClients.length}
+                currentPage={clientPageClamped}
+                onPageChange={setClientTablePage}
+              />
+            </div>
+          </div>
+        ))}
 
       {/* Modal confirmar suspender utilizador */}
       {userToSuspender && (
@@ -608,6 +902,113 @@ export default function Utilizadores() {
                 className="flex-1 py-2.5 px-4 bg-primary-600 text-white rounded-xl text-sm font-medium hover:bg-primary-700 disabled:opacity-50 transition-colors shadow-lg shadow-primary-900/30"
               >
                 {submitLoading ? 'A guardar…' : 'Redefinir'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {clientForPin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-netflix-card rounded-2xl shadow-2xl border border-primary-500/40 max-w-sm w-full overflow-hidden">
+            <div className="p-6 border-b border-netflix-border/80">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-primary-500/20 text-primary-400 ring-1 ring-primary-500/30">
+                  <KeyRound className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold text-white">PIN área /cliente</h3>
+                  <p className="text-xs text-gray-400 mt-0.5">{clientForPin.nome}</p>
+                  <div className="h-1 w-12 bg-primary-500 rounded-full mt-2" />
+                </div>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-gray-500">
+                O cliente entra com este WhatsApp no login e o PIN que definir (mín. 4 caracteres). O PIN anterior deixa de ser válido.
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-0.5">Novo PIN</label>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={pinForm.pin}
+                  onChange={(e) => setPinForm((f) => ({ ...f, pin: e.target.value }))}
+                  placeholder="Mín. 4 caracteres"
+                  className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-xl text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-0.5">Confirmar PIN</label>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={pinForm.confirm}
+                  onChange={(e) => setPinForm((f) => ({ ...f, confirm: e.target.value }))}
+                  placeholder="Repita o PIN"
+                  className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-xl text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80 bg-netflix-panel/30">
+              <button
+                type="button"
+                onClick={() => {
+                  setClientForPin(null)
+                  setPinForm({ pin: '', confirm: '' })
+                }}
+                className="flex-1 py-2.5 px-4 border border-netflix-border rounded-xl text-sm font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmarPinCliente}
+                disabled={submitLoading}
+                className="flex-1 py-2.5 px-4 bg-primary-600 text-white rounded-xl text-sm font-medium hover:bg-primary-700 disabled:opacity-50 transition-colors shadow-lg shadow-primary-900/30"
+              >
+                {submitLoading ? 'A guardar…' : 'Guardar PIN'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {clientToRevoke && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-netflix-card rounded-2xl shadow-2xl border border-amber-500/40 max-w-sm w-full overflow-hidden">
+            <div className="p-6 border-b border-netflix-border/80">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 ring-1 ring-amber-500/30">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold text-white">Revogar acesso /cliente</h3>
+                  <p className="text-xs text-gray-400 mt-0.5">{clientToRevoke.nome}</p>
+                  <div className="h-1 w-12 bg-amber-500 rounded-full mt-2" />
+                </div>
+              </div>
+            </div>
+            <div className="p-6 space-y-2">
+              <p className="text-sm text-gray-300">
+                Remover o PIN impede o login na área do cliente até ser definido um novo PIN.
+              </p>
+            </div>
+            <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80">
+              <button
+                type="button"
+                onClick={() => setClientToRevoke(null)}
+                className="flex-1 py-2.5 px-4 border border-netflix-border rounded-xl text-sm font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmarRevogarPortal}
+                disabled={submitLoading}
+                className="flex-1 py-2.5 px-4 bg-amber-600 text-white rounded-xl text-sm font-medium hover:bg-amber-700 disabled:opacity-50 transition-colors shadow-lg shadow-amber-900/30"
+              >
+                {submitLoading ? 'A revogar…' : 'Revogar'}
               </button>
             </div>
           </div>

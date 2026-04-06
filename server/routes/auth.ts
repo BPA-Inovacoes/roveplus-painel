@@ -60,9 +60,59 @@ router.get('/me', authMiddleware, async (req, res) => {
   const { userId } = (req as unknown as { user: AuthPayload }).user
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, nome: true, email: true, role: true },
+    select: { id: true, nome: true, email: true, role: true, whatsapp: true },
   })
   if (!user) return res.status(401).json({ error: 'Utilizador não encontrado' })
+  res.json(user)
+})
+
+/** Atualizar o próprio perfil (nome, email, WhatsApp, senha). Não altera perfil/role. */
+router.patch('/me', authMiddleware, async (req, res) => {
+  const { userId } = (req as unknown as { user: AuthPayload }).user
+  const { nome, email, whatsapp, currentPassword, newPassword } = req.body as Record<string, unknown>
+
+  const existing = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, password: true },
+  })
+  if (!existing) return res.status(401).json({ error: 'Utilizador não encontrado' })
+
+  const wantsPasswordChange =
+    newPassword != null && String(newPassword).length > 0
+  if (wantsPasswordChange) {
+    if (!currentPassword || !(await bcrypt.compare(String(currentPassword), existing.password))) {
+      return res.status(400).json({ error: 'Senha atual incorreta' })
+    }
+    if (String(newPassword).length < 6) {
+      return res.status(400).json({ error: 'Nova senha deve ter pelo menos 6 caracteres' })
+    }
+  }
+
+  const data: { nome?: string; email?: string; whatsapp?: string | null; password?: string } = {}
+  if (nome != null) data.nome = String(nome).trim()
+  if (email != null) {
+    const emailNorm = String(email).trim().toLowerCase()
+    const dup = await prisma.user.findFirst({ where: { email: emailNorm, NOT: { id: userId } } })
+    if (dup) return res.status(400).json({ error: 'Email já utilizado' })
+    data.email = emailNorm
+  }
+  if (whatsapp !== undefined) {
+    data.whatsapp =
+      whatsapp != null && String(whatsapp).trim() !== '' ? String(whatsapp).trim() : null
+  }
+  if (wantsPasswordChange) {
+    data.password = await bcrypt.hash(String(newPassword), 10)
+  }
+
+  if (Object.keys(data).length === 0) {
+    return res.status(400).json({ error: 'Nada para atualizar' })
+  }
+
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data,
+    select: { id: true, nome: true, email: true, role: true, whatsapp: true },
+  })
   res.json(user)
 })
 

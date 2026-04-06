@@ -13,6 +13,7 @@ import indicacoesRoutes from './routes/indicacoes.js'
 import auditRoutes from './routes/audit.js'
 import cronRoutes from './routes/cron.js'
 import usersRoutes from './routes/users.js'
+import clientPortalRoutes from './routes/client-portal.js'
 
 const app = express()
 
@@ -30,6 +31,7 @@ app.use('/api/indicacoes', indicacoesRoutes)
 app.use('/api/audit', auditRoutes)
 app.use('/api/cron', cronRoutes)
 app.use('/api/users', usersRoutes)
+app.use('/api/client-portal', clientPortalRoutes)
 
 app.get('/api/health', async (_req, res) => {
   try {

@@ -1,13 +1,20 @@
 import { Router } from 'express'
+import bcrypt from 'bcryptjs'
+import type { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma.js'
 import { authMiddleware, getRoleServicoFilter, canAccessServico } from '../middleware/auth.js'
 import type { AuthPayload } from '../middleware/auth.js'
 import { auditLog } from '../middleware/audit.js'
-import { sendWhatsAppMessage, templates } from '../services/whatsapp.js'
+import { sendWhatsAppMessage, templates, normalizeClientWhatsappKey } from '../services/whatsapp.js'
 
 const router = Router()
 
 router.use(authMiddleware)
+
+function stripPortalPinHash<T extends Record<string, unknown>>(c: T) {
+  const { portalPinHash: _p, ...rest } = c
+  return rest
+}
 
 /** Adiciona N meses à data fim atual (mantém o dia; renovar = +1 mês, +2 meses, etc.). */
 function adicionarMesesADataFim(base: Date, meses: number): Date {
@@ -65,7 +72,15 @@ router.get('/', async (req, res) => {
     include: { servidor: true, revendedor: true, sala: true },
     orderBy: { dataFim: 'asc' },
   })
-  res.json(clients.map((c) => ({ ...c, valor: Number(c.valor) })))
+  res.json(
+    clients.map((c) => {
+      const areaClienteAtiva = !!c.portalPinHash
+      return {
+        ...stripPortalPinHash({ ...c, valor: Number(c.valor) } as Record<string, unknown>),
+        areaClienteAtiva,
+      }
+    })
+  )
 })
 
 router.get('/:id', async (req, res) => {
@@ -76,7 +91,10 @@ router.get('/:id', async (req, res) => {
   })
   if (!client) return res.status(404).json({ error: 'Cliente não encontrado' })
   if (!canAccessServico(user.role, client.servico)) return res.status(403).json({ error: 'Sem acesso a este cliente' })
-  res.json({ ...client, valor: Number(client.valor) })
+  res.json({
+    ...stripPortalPinHash({ ...client, valor: Number(client.valor) } as Record<string, unknown>),
+    areaClienteAtiva: !!client.portalPinHash,
+  })
 })
 
 router.post('/', auditLog('create_client', 'client'), async (req, res) => {
@@ -89,6 +107,13 @@ router.post('/', auditLog('create_client', 'client'), async (req, res) => {
   if (servico === 'netflix' && salaId) {
     const sala = await prisma.sala.findUnique({ where: { id: salaId } })
     if (sala?.dataFim) dataFim = sala.dataFim
+  }
+  let portalPinHash: string | undefined
+  if (body.portalPin != null && String(body.portalPin).trim() !== '') {
+    if (String(body.portalPin).trim().length < 4) {
+      return res.status(400).json({ error: 'PIN da área cliente deve ter pelo menos 4 caracteres' })
+    }
+    portalPinHash = await bcrypt.hash(String(body.portalPin).trim(), 10)
   }
   const client = await prisma.client.create({
     data: {
@@ -111,11 +136,15 @@ router.post('/', auditLog('create_client', 'client'), async (req, res) => {
       inscricaoPaga: body.inscricaoPaga === true || body.inscricaoPaga === 'true' ? true : body.inscricaoPaga === false || body.inscricaoPaga === 'false' ? false : null,
       salaId,
       status: 'ativo',
+      ...(portalPinHash ? { portalPinHash } : {}),
     },
   })
   const msg = templates.clienteCadastrado(client.nome, dataFim.toLocaleDateString('pt-BR'))
-  sendWhatsAppMessage(client.whatsapp, msg).catch(() => {})
-  res.status(201).json({ ...client, valor: Number(client.valor) })
+  void sendWhatsAppMessage(client.whatsapp, msg).catch(() => {})
+  res.status(201).json({
+    ...stripPortalPinHash({ ...client, valor: Number(client.valor) } as Record<string, unknown>),
+    areaClienteAtiva: !!client.portalPinHash,
+  })
 })
 
 router.patch('/:id', auditLog('update_client', 'client'), async (req, res) => {
@@ -126,35 +155,47 @@ router.patch('/:id', auditLog('update_client', 'client'), async (req, res) => {
   if (!canAccessServico(user.role, existing.servico)) return res.status(403).json({ error: 'Sem acesso a este cliente' })
   const body = req.body
   if (body.servico != null && !canAccessServico(user.role, body.servico)) return res.status(403).json({ error: 'Sem permissão para este serviço' })
-  const update: Record<string, unknown> = {}
-  if (body.nome != null) update.nome = body.nome
-  if (body.whatsapp != null) update.whatsapp = body.whatsapp
-  if (body.localizacao !== undefined) update.localizacao = body.localizacao || null
-  if (body.servico != null) update.servico = body.servico
-  if (body.plano != null) update.plano = body.plano
-  if (body.servidorId != null) update.servidorId = body.servidorId ? Number(body.servidorId) : null
-  if (body.revendedorId !== undefined) update.revendedorId = body.revendedorId ? Number(body.revendedorId) : null
-  if (body.perfil != null) update.perfil = body.perfil
-  if (body.pin !== undefined) update.pin = body.pin || null
-  if (body.iptvUser != null) update.iptvUser = body.iptvUser
-  if (body.iptvPass != null) update.iptvPass = body.iptvPass
-  if (body.iptvMac != null) update.iptvMac = body.iptvMac
-  if (body.iptvM3u != null) update.iptvM3u = body.iptvM3u
-  if (body.dataInicio != null) update.dataInicio = new Date(body.dataInicio)
+  const data: Prisma.ClientUpdateInput = {}
+  if (body.nome != null) data.nome = body.nome
+  if (body.whatsapp != null) data.whatsapp = body.whatsapp
+  if (body.localizacao !== undefined) data.localizacao = body.localizacao || null
+  if (body.servico != null) data.servico = body.servico
+  if (body.plano != null) data.plano = body.plano
+  if (body.servidorId != null) data.servidorId = body.servidorId ? Number(body.servidorId) : null
+  if (body.revendedorId !== undefined) data.revendedorId = body.revendedorId ? Number(body.revendedorId) : null
+  if (body.perfil != null) data.perfil = body.perfil
+  if (body.pin !== undefined) data.pin = body.pin || null
+  if (body.iptvUser != null) data.iptvUser = body.iptvUser
+  if (body.iptvPass != null) data.iptvPass = body.iptvPass
+  if (body.iptvMac != null) data.iptvMac = body.iptvMac
+  if (body.iptvM3u != null) data.iptvM3u = body.iptvM3u
+  if (body.dataInicio != null) data.dataInicio = new Date(body.dataInicio)
   if (body.dataFim != null) {
     const newDataFim = new Date(body.dataFim)
-    update.dataFim = newDataFim
+    data.dataFim = newDataFim
     if (existing.salaId && existing.servico === 'netflix') {
       await prisma.sala.update({ where: { id: existing.salaId }, data: { dataFim: newDataFim } })
       await prisma.client.updateMany({ where: { salaId: existing.salaId }, data: { dataFim: newDataFim } })
     }
   }
-  if (body.valor != null) update.valor = Number(body.valor)
-  if (body.inscricaoPaga !== undefined) update.inscricaoPaga = body.inscricaoPaga === true || body.inscricaoPaga === 'true'
-  if (body.salaId !== undefined) update.salaId = body.salaId != null && body.salaId !== '' ? Number(body.salaId) : null
-  if (body.status != null) update.status = body.status
-  const client = await prisma.client.update({ where: { id }, data: update })
-  res.json({ ...client, valor: Number(client.valor) })
+  if (body.valor != null) data.valor = Number(body.valor)
+  if (body.inscricaoPaga !== undefined) data.inscricaoPaga = body.inscricaoPaga === true || body.inscricaoPaga === 'true'
+  if (body.salaId !== undefined) data.salaId = body.salaId != null && body.salaId !== '' ? Number(body.salaId) : null
+  if (body.status != null) data.status = body.status
+  if (body.portalPin !== undefined) {
+    if (body.portalPin === null || String(body.portalPin).trim() === '') {
+      data.portalPinHash = null
+    } else if (String(body.portalPin).trim().length < 4) {
+      return res.status(400).json({ error: 'PIN da área cliente deve ter pelo menos 4 caracteres' })
+    } else {
+      data.portalPinHash = await bcrypt.hash(String(body.portalPin).trim(), 10)
+    }
+  }
+  const client = await prisma.client.update({ where: { id }, data })
+  res.json({
+    ...stripPortalPinHash({ ...client, valor: Number(client.valor) } as Record<string, unknown>),
+    areaClienteAtiva: !!client.portalPinHash,
+  })
 })
 
 router.post('/:id/renovar', auditLog('renew_client', 'client'), async (req, res) => {
@@ -172,20 +213,44 @@ router.post('/:id/renovar', auditLog('renew_client', 'client'), async (req, res)
     const base = new Date(sala?.dataFim ?? client.dataFim)
     dataFim = adicionarMesesADataFim(base, mesesAdd)
     await prisma.sala.update({ where: { id: client.salaId }, data: { dataFim } })
-    await prisma.client.updateMany({ where: { salaId: client.salaId }, data: { dataFim, status: 'ativo' } })
+    await prisma.client.updateMany({
+      where: { salaId: client.salaId },
+      data: { dataFim, status: 'ativo', whatsappNotificadoVencimentoAt: null },
+    })
   } else {
     const base = new Date(client.dataFim)
     dataFim = adicionarMesesADataFim(base, mesesAdd)
     await prisma.client.update({
       where: { id },
-      data: { dataFim, valor: valor != null ? Number(valor) : client.valor, status: 'ativo' },
+      data: {
+        dataFim,
+        valor: valor != null ? Number(valor) : client.valor,
+        status: 'ativo',
+        whatsappNotificadoVencimentoAt: null,
+      },
     })
   }
   const updated = await prisma.client.findUnique({ where: { id }, include: { sala: true } })
   if (!updated) return res.status(404).json({ error: 'Cliente não encontrado' })
-  const msg = templates.renovado(client.nome, dataFim.toLocaleDateString('pt-BR'))
-  sendWhatsAppMessage(client.whatsapp, msg).catch(() => {})
-  res.json({ ...updated, valor: Number(updated.valor) })
+  const fimStr = dataFim.toLocaleDateString('pt-BR')
+  if (client.salaId && client.servico === 'netflix') {
+    const naSala = await prisma.client.findMany({ where: { salaId: client.salaId } })
+    const seen = new Set<string>()
+    for (const c of naSala) {
+      const key = normalizeClientWhatsappKey(c.whatsapp)
+      if (seen.has(key)) continue
+      seen.add(key)
+      const msg = templates.renovado(c.nome, fimStr)
+      void sendWhatsAppMessage(c.whatsapp, msg).catch(() => {})
+    }
+  } else {
+    const msg = templates.renovado(client.nome, fimStr)
+    void sendWhatsAppMessage(client.whatsapp, msg).catch(() => {})
+  }
+  res.json({
+    ...stripPortalPinHash({ ...updated, valor: Number(updated.valor) } as Record<string, unknown>),
+    areaClienteAtiva: !!updated.portalPinHash,
+  })
 })
 
 router.post('/:id/marcar-pago', auditLog('mark_paid_client', 'client'), async (req, res) => {
@@ -198,9 +263,19 @@ router.post('/:id/marcar-pago', auditLog('mark_paid_client', 'client'), async (r
   const { dataFim } = req.body
   const updated = await prisma.client.update({
     where: { id },
-    data: { dataFim: dataFim ? new Date(dataFim) : client.dataFim, status: 'ativo' },
+    data: {
+      dataFim: dataFim ? new Date(dataFim) : client.dataFim,
+      status: 'ativo',
+      whatsappNotificadoVencimentoAt: null,
+    },
   })
-  res.json({ ...updated, valor: Number(updated.valor) })
+  const fimStr = new Date(updated.dataFim).toLocaleDateString('pt-BR')
+  const msgPago = templates.pagamentoRegistado(updated.nome, fimStr)
+  void sendWhatsAppMessage(updated.whatsapp, msgPago).catch(() => {})
+  res.json({
+    ...stripPortalPinHash({ ...updated, valor: Number(updated.valor) } as Record<string, unknown>),
+    areaClienteAtiva: !!updated.portalPinHash,
+  })
 })
 
 router.post('/:id/suspender', auditLog('suspend_client', 'client'), async (req, res) => {
@@ -212,11 +287,14 @@ router.post('/:id/suspender', auditLog('suspend_client', 'client'), async (req, 
   if (existing.status === 'vencido') return res.status(400).json({ error: 'Cliente já está vencido.' })
   const updated = await prisma.client.update({
     where: { id },
-    data: { status: 'vencido' },
+    data: { status: 'vencido', whatsappNotificadoVencimentoAt: new Date() },
   })
-  const msg = templates.vencido(updated.nome)
-  sendWhatsAppMessage(updated.whatsapp, msg).catch(() => {})
-  res.json({ ...updated, valor: Number(updated.valor) })
+  const msg = templates.servicoSuspenso(updated.nome)
+  void sendWhatsAppMessage(updated.whatsapp, msg).catch(() => {})
+  res.json({
+    ...stripPortalPinHash({ ...updated, valor: Number(updated.valor) } as Record<string, unknown>),
+    areaClienteAtiva: !!updated.portalPinHash,
+  })
 })
 
 /** Próximo dia 11 a partir de hoje (para cliente ficar ativo após ativar). */
@@ -237,9 +315,15 @@ router.post('/:id/ativar', auditLog('activate_client', 'client'), async (req, re
   const dataFim = proximoDia11()
   const updated = await prisma.client.update({
     where: { id },
-    data: { status: 'ativo', dataFim },
+    data: { status: 'ativo', dataFim, whatsappNotificadoVencimentoAt: null },
   })
-  res.json({ ...updated, valor: Number(updated.valor) })
+  const fimStr = dataFim.toLocaleDateString('pt-BR')
+  const msgAtiv = templates.reativado(updated.nome, fimStr)
+  void sendWhatsAppMessage(updated.whatsapp, msgAtiv).catch(() => {})
+  res.json({
+    ...stripPortalPinHash({ ...updated, valor: Number(updated.valor) } as Record<string, unknown>),
+    areaClienteAtiva: !!updated.portalPinHash,
+  })
 })
 
 router.delete('/:id', auditLog('delete_client', 'client'), async (req, res) => {

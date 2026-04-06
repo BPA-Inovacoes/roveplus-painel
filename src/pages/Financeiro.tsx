@@ -11,6 +11,7 @@ import {
 } from 'recharts'
 import { DollarSign, LayoutDashboard, CalendarClock, TrendingUp, Tv, Server } from 'lucide-react'
 import { api } from '../api/client'
+import { useAlert } from '../contexts/AlertContext'
 import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
 
 interface ReceitaPorServidor {
@@ -50,6 +51,7 @@ const CHART_COLORS = {
 }
 
 export default function Financeiro() {
+  const { showWarning } = useAlert()
   const [data, setData] = useState<FinanceData | null>(null)
   const [loading, setLoading] = useState(true)
   const [mesesProjecao, setMesesProjecao] = useState(3)
@@ -61,9 +63,14 @@ export default function Financeiro() {
     api
       .get<FinanceData>('/api/dashboard')
       .then(setData)
-      .catch(() => { /* não limpar dados em erro – manter anteriores (BD pode ter falhado temporariamente) */ })
+      .catch((e) => {
+        /* Não limpar dados em erro – manter anteriores se já existirem (ex.: falha temporária da BD). */
+        showWarning(
+          e instanceof Error ? e.message : 'Não foi possível carregar os dados financeiros. Verifique a ligação ou tente mais tarde.'
+        )
+      })
       .finally(() => setLoading(false))
-  }, [])
+  }, [showWarning])
 
   const receita = data ? Number(data.receitaMes).toFixed(2) : '0.00'
   const variacaoReceita = data?.variacaoReceita ?? 0

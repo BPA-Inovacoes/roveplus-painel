@@ -30,6 +30,7 @@ import {
   LayoutGrid,
 } from 'lucide-react'
 import { api } from '../api/client'
+import { useAlert } from '../contexts/AlertContext'
 import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
 
 interface DashboardData {
@@ -64,6 +65,7 @@ const CHART_COLORS = {
 }
 
 export default function Dashboard() {
+  const { showError } = useAlert()
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [servidorTablePage, setServidorTablePage] = useState(1)
@@ -72,9 +74,12 @@ export default function Dashboard() {
     api
       .get<DashboardData>('/api/dashboard')
       .then(setData)
-      .catch(() => setData(null))
+      .catch((e) => {
+        setData(null)
+        showError(e instanceof Error ? e.message : 'Não foi possível carregar o dashboard.')
+      })
       .finally(() => setLoading(false))
-  }, [])
+  }, [showError])
 
   if (loading) {
     return (

@@ -17,9 +17,10 @@ const PORT = process.env.PORT || 3002
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || ''
 
 // --- WhatsApp Client ---
+const WWEBJS_AUTH_PATH = process.env.WWEBJS_AUTH_PATH || './.wwebjs_auth'
 const client = new Client({
   authStrategy: new LocalAuth({
-    dataPath: './.wwebjs_auth',
+    dataPath: WWEBJS_AUTH_PATH,
   }),
 })
 

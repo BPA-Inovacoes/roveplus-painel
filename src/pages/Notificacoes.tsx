@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { api } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
+import { useAlert } from '../contexts/AlertContext'
 
 interface NotifData {
   totalNetflix?: number
@@ -85,6 +86,7 @@ function IndicatorCard({
 
 export default function Notificacoes() {
   const { user } = useAuth()
+  const { showError } = useAlert()
   const [data, setData] = useState<NotifData | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -92,9 +94,12 @@ export default function Notificacoes() {
     api
       .get<NotifData>('/api/dashboard')
       .then(setData)
-      .catch(() => setData(null))
+      .catch((e) => {
+        setData(null)
+        showError(e instanceof Error ? e.message : 'Não foi possível carregar as notificações.')
+      })
       .finally(() => setLoading(false))
-  }, [])
+  }, [showError])
 
   const role = user?.role
   const showNetflix = role !== 'iptv'

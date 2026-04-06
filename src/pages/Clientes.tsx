@@ -40,6 +40,7 @@ interface Client {
   indicacoes: number
   servidor?: { id: number; nome: string } | null
   revendedor?: { id: number; nome: string } | null
+  areaClienteAtiva?: boolean
 }
 
 interface Servidor {
@@ -124,7 +125,9 @@ export default function Clientes() {
   const [renovarMeses, setRenovarMeses] = useState(1)
   const [editStep, setEditStep] = useState(1)
   const [tablePage, setTablePage] = useState(1)
-  const [form, setForm] = useState<Partial<Client>>({
+  const [form, setForm] = useState<
+    Partial<Client> & { portalPin?: string; removerPinPortal?: boolean }
+  >({
     nome: '',
     whatsapp: '',
     localizacao: '',
@@ -132,6 +135,8 @@ export default function Clientes() {
     plano: 'mensal',
     valor: 0,
     dataFim: '',
+    portalPin: '',
+    removerPinPortal: false,
   })
 
   function load() {
@@ -233,19 +238,41 @@ export default function Clientes() {
     }
     try {
       if (modal === 'new') {
-        await api.post<Client>('/api/clients', {
+        const body: Record<string, unknown> = {
           ...form,
           dataFim: form.dataFim || undefined,
           servidorId: form.servidorId || null,
           revendedorId: form.revendedorId || null,
           localizacao: form.localizacao || null,
           salaId: form.salaId ?? null,
-        })
+        }
+        delete body.areaClienteAtiva
+        delete body.removerPinPortal
+        if (form.portalPin?.trim()) body.portalPin = form.portalPin.trim()
+        else delete body.portalPin
+        await api.post<Client>('/api/clients', body)
       } else if (form.id) {
-        await api.patch(`/api/clients/${form.id}`, { ...form, salaId: form.salaId ?? null })
+        const patch: Record<string, unknown> = { ...form, salaId: form.salaId ?? null }
+        delete patch.areaClienteAtiva
+        delete patch.removerPinPortal
+        delete patch.portalPin
+        if (form.removerPinPortal) patch.portalPin = ''
+        else if (form.portalPin?.trim() && form.portalPin.trim().length >= 4) patch.portalPin = form.portalPin.trim()
+        await api.patch(`/api/clients/${form.id}`, patch)
       }
       setModal(null)
-      setForm({ nome: '', whatsapp: '', localizacao: '', servico: servicoFixo ?? 'iptv', plano: 'mensal', valor: 0, dataFim: '', revendedorId: null })
+      setForm({
+        nome: '',
+        whatsapp: '',
+        localizacao: '',
+        servico: servicoFixo ?? 'iptv',
+        plano: 'mensal',
+        valor: 0,
+        dataFim: '',
+        revendedorId: null,
+        portalPin: '',
+        removerPinPortal: false,
+      })
       load()
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Erro ao guardar')
@@ -387,6 +414,8 @@ export default function Clientes() {
               valor: 0,
               dataFim: '',
               revendedorId: null,
+              portalPin: '',
+              removerPinPortal: false,
             })
             setEditStep(1)
             setModal('new')
@@ -603,7 +632,7 @@ export default function Clientes() {
                             <button
                               type="button"
                               onClick={() => {
-                                setForm({ ...c })
+                                setForm({ ...c, portalPin: '', removerPinPortal: false })
                                 setEditStep(1)
                                 setModal('edit')
                               }}
@@ -978,6 +1007,37 @@ export default function Clientes() {
                         placeholder="Ex: Luanda, Benguela..."
                       />
                     </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-0.5">
+                        PIN área cliente <span className="text-gray-500 font-normal">(app /cliente)</span>
+                      </label>
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={form.portalPin || ''}
+                        onChange={(e) =>
+                          setForm((f) => ({ ...f, portalPin: e.target.value, removerPinPortal: false }))
+                        }
+                        className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                        placeholder={modal === 'edit' ? 'Novo PIN (mín. 4) ou vazio para manter' : 'Mín. 4 caracteres para o cliente aceder'}
+                      />
+                      {modal === 'edit' && form.areaClienteAtiva && (
+                        <label className="flex items-center gap-2 mt-2 text-xs text-gray-400 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={!!form.removerPinPortal}
+                            onChange={(e) =>
+                              setForm((f) => ({
+                                ...f,
+                                removerPinPortal: e.target.checked,
+                                portalPin: e.target.checked ? '' : f.portalPin,
+                              }))
+                            }
+                          />
+                          Remover acesso à área cliente
+                        </label>
+                      )}
+                    </div>
                   </>
                 )}
                 {editStep === 2 && (
@@ -1159,6 +1219,37 @@ export default function Clientes() {
                         placeholder="Ex: Luanda, Benguela..."
                       />
                     </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-0.5">
+                        PIN área cliente <span className="text-gray-500 font-normal">(app /cliente)</span>
+                      </label>
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={form.portalPin || ''}
+                        onChange={(e) =>
+                          setForm((f) => ({ ...f, portalPin: e.target.value, removerPinPortal: false }))
+                        }
+                        className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                        placeholder={modal === 'edit' ? 'Novo PIN (mín. 4) ou vazio para manter' : 'Mín. 4 caracteres para o cliente aceder'}
+                      />
+                      {modal === 'edit' && form.areaClienteAtiva && (
+                        <label className="flex items-center gap-2 mt-2 text-xs text-gray-400 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={!!form.removerPinPortal}
+                            onChange={(e) =>
+                              setForm((f) => ({
+                                ...f,
+                                removerPinPortal: e.target.checked,
+                                portalPin: e.target.checked ? '' : f.portalPin,
+                              }))
+                            }
+                          />
+                          Remover acesso à área cliente
+                        </label>
+                      )}
+                    </div>
                   </>
                 )}
                 {editStep === 2 && (
@@ -1309,6 +1400,19 @@ export default function Clientes() {
                         onChange={(e) => setForm((f) => ({ ...f, localizacao: e.target.value }))}
                         className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
                         placeholder="Ex: Luanda, Benguela..."
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-0.5">
+                        PIN área cliente <span className="text-gray-500 font-normal">(opcional)</span>
+                      </label>
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={form.portalPin || ''}
+                        onChange={(e) => setForm((f) => ({ ...f, portalPin: e.target.value }))}
+                        className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                        placeholder="Mín. 4 caracteres — app em /cliente"
                       />
                     </div>
                   </>

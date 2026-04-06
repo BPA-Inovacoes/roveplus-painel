@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { LogIn, Mail, Lock } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
@@ -140,6 +140,12 @@ export default function Login() {
             <a href="#" className="text-primary-400 hover:text-primary-300 underline">
               Contacte o administrador
             </a>
+          </p>
+          <p className="text-gray-500 text-sm mt-3">
+            É cliente Rove+?{' '}
+            <Link to="/cliente/login" className="text-primary-400 hover:text-primary-300 font-medium">
+              Área do cliente
+            </Link>
           </p>
         </motion.div>
       </div>

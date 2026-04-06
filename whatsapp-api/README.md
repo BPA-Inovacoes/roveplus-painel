@@ -17,7 +17,7 @@ npm install
 ## Como iniciar o servidor
 
 ```bash
-node server.js
+node server .js
 ```
 
 Ou, com o script do package.json:
@@ -55,12 +55,14 @@ No Rove+, define `WHATSAPP_API_URL=http://localhost:3002`.
 |-------------------|-------------|-----------|
 | `PORT`            | Não         | Porta do servidor (default: 3001). |
 | `WHATSAPP_TOKEN`  | Recomendado | Token para o header `Authorization: Bearer ...`. Se não definires, a API aceita qualquer requisição (apenas para desenvolvimento). |
+| `WWEBJS_AUTH_PATH`| Não         | Caminho persistente para a sessão do LocalAuth (default: `./.wwebjs_auth`). Em VPS/Docker, monta um volume neste path. |
 
 Exemplo `.env`:
 
 ```env
 PORT=3001
 WHATSAPP_TOKEN=seu_token_secreto
+WWEBJS_AUTH_PATH=/app/.wwebjs_auth
 ```
 
 ## Endpoints
@@ -165,8 +167,14 @@ O serviço `server/services/whatsapp.ts` do Rove+ já usa `WHATSAPP_API_URL` e `
 
 ## Rodar em VPS ou Docker
 
-- **VPS:** instalar Node.js, clonar/copiar a pasta, `npm install`, configurar `PORT` e `WHATSAPP_TOKEN`. Usar `pm2` ou `systemd` para manter o processo a correr (e garantir que o QR foi escaneado uma vez para a sessão ficar em `.wwebjs_auth`).
-- **Docker:** criar uma imagem que execute `node server.js`, montar um volume em `.wwebjs_auth` para persistir a sessão. Na primeira vez será preciso aceder ao container (ou ao log) para ver o QR e escanear.
+- **PaaS long-running (ex: Render/Railway/Fly.io) com disco persistente:**
+  - instalar/usar `docker` ou “Node service” do provider
+  - definir `WWEBJS_AUTH_PATH` para um caminho **persistente** (ex: `./.wwebjs_auth` montado via volume)
+  - garantir que o serviço fica ligado 24h e que o volume persistente não é apagado em cada deploy
+  - na primeira execução, escanear o QR no log do serviço (depois a sessão mantém-se no volume)
+- **Docker:**
+  - subir um container e montar volume no caminho definido em `WWEBJS_AUTH_PATH` (por exemplo `/app/.wwebjs_auth`)
+  - manter o container sempre ligado
 
 ## Resumo do fluxo
 

@@ -13,7 +13,10 @@ async function request<T>(
     },
   })
   if (res.status === 401) {
-    if (!window.location.pathname.startsWith('/login')) {
+    const loc = window.location.pathname
+    if (path.startsWith('/api/client-portal')) {
+      if (!loc.startsWith('/cliente/login')) window.location.href = '/cliente/login'
+    } else if (!loc.startsWith('/login')) {
       window.location.href = '/login'
     }
     throw new Error('Não autorizado')

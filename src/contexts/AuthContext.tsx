@@ -6,6 +6,7 @@ export interface User {
   nome: string
   email: string
   role: string
+  whatsapp?: string | null
 }
 
 interface AuthContextValue {

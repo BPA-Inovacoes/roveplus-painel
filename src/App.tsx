@@ -14,6 +14,10 @@ import Utilizadores from './pages/Utilizadores'
 import Financeiro from './pages/Financeiro'
 import Manual from './pages/Manual'
 import Notificacoes from './pages/Notificacoes'
+import MeuPerfil from './pages/MeuPerfil'
+import ClienteLogin from './pages/ClienteLogin'
+import ClientArea from './pages/ClientArea'
+import { useClientPortal } from './contexts/ClientPortalContext'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -30,10 +34,34 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+function ProtectedClienteRoute({ children }: { children: React.ReactNode }) {
+  const { client, loading } = useClientPortal()
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-netflix-bg flex items-center justify-center">
+        <div className="animate-spin rounded-full h-10 w-10 border-2 border-primary-600 border-t-transparent" />
+      </div>
+    )
+  }
+  if (!client) {
+    return <Navigate to="/cliente/login" replace />
+  }
+  return <>{children}</>
+}
+
 function App() {
   return (
     <AlertProvider>
       <Routes>
+      <Route path="/cliente/login" element={<ClienteLogin />} />
+      <Route
+        path="/cliente"
+        element={
+          <ProtectedClienteRoute>
+            <ClientArea />
+          </ProtectedClienteRoute>
+        }
+      />
       <Route path="/login" element={<Login />} />
       <Route
         path="/"
@@ -52,6 +80,7 @@ function App() {
         <Route path="utilizadores" element={<Utilizadores />} />
         <Route path="financeiro" element={<Financeiro />} />
         <Route path="notificacoes" element={<Notificacoes />} />
+        <Route path="perfil" element={<MeuPerfil />} />
         <Route path="audit" element={<Audit />} />
         <Route path="manual" element={<Manual />} />
       </Route>

@@ -20,16 +20,28 @@ router.get('/', async (req, res) => {
 
 router.post('/', auditLog('create_indicacao', 'indicacao'), async (req, res) => {
   const { indicadorId, indicadoNome, indicadoWhatsapp } = req.body
+  const idIndicador = Number(indicadorId)
+  if (!Number.isFinite(idIndicador) || idIndicador < 1) {
+    return res.status(400).json({ error: 'Cliente indicador inválido' })
+  }
+  const nome = String(indicadoNome ?? '').trim()
+  if (nome.length < 2) {
+    return res.status(400).json({ error: 'Nome do indicado deve ter pelo menos 2 caracteres' })
+  }
+  const existe = await prisma.client.findUnique({ where: { id: idIndicador }, select: { id: true } })
+  if (!existe) {
+    return res.status(404).json({ error: 'Cliente indicador não encontrado' })
+  }
   const indicacao = await prisma.indicacao.create({
     data: {
-      indicadorId: Number(indicadorId),
-      indicadoNome: indicadoNome || '',
-      indicadoWhatsapp: indicadoWhatsapp || '',
+      indicadorId: idIndicador,
+      indicadoNome: nome,
+      indicadoWhatsapp: String(indicadoWhatsapp ?? '').trim(),
       status: 'pendente',
     },
   })
   await prisma.client.update({
-    where: { id: Number(indicadorId) },
+    where: { id: idIndicador },
     data: { indicacoes: { increment: 1 } },
   })
   res.status(201).json(indicacao)
