@@ -155,7 +155,7 @@ router.patch('/:id', auditLog('update_client', 'client'), async (req, res) => {
   if (!canAccessServico(user.role, existing.servico)) return res.status(403).json({ error: 'Sem acesso a este cliente' })
   const body = req.body
   if (body.servico != null && !canAccessServico(user.role, body.servico)) return res.status(403).json({ error: 'Sem permissão para este serviço' })
-  const data: Prisma.ClientUpdateInput = {}
+  const data: Prisma.ClientUncheckedUpdateInput = {}
   if (body.nome != null) data.nome = body.nome
   if (body.whatsapp != null) data.whatsapp = body.whatsapp
   if (body.localizacao !== undefined) data.localizacao = body.localizacao || null
