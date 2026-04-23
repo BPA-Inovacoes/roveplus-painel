@@ -13,6 +13,21 @@ async function ensureSalaStatusColumn(): Promise<void> {
   `)
 }
 
+/**
+ * Soma meses preservando o dia de referência da própria sala.
+ * Ex.: 03/01 -> 03/02 -> 03/03 (independente da data atual).
+ */
+function addMonthsKeepingBillingDay(base: Date, months: number): Date {
+  const d = new Date(base)
+  d.setHours(0, 0, 0, 0)
+  const billingDay = d.getDate()
+  d.setDate(1)
+  d.setMonth(d.getMonth() + months)
+  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()
+  d.setDate(Math.min(billingDay, lastDay))
+  return d
+}
+
 router.use(authMiddleware)
 
 router.get('/', async (req, res) => {
@@ -131,9 +146,10 @@ router.post('/:id/pagar-mes', auditLog('pay_sala_month', 'sala'), async (req, re
   const existing = await prisma.sala.findUnique({ where: { id } })
   if (!existing) return res.status(404).json({ error: 'Sala não encontrada' })
 
-  const baseDate = existing.dataFim && existing.dataFim > new Date() ? existing.dataFim : new Date()
-  const nextMonth = new Date(baseDate.getTime())
-  nextMonth.setMonth(nextMonth.getMonth() + 1)
+  // Regra do negócio: pagamento de sala soma sempre 1 mês à data fim da própria sala,
+  // mantendo o mesmo dia de cobrança em todos os meses.
+  const baseDate = existing.dataFim ?? new Date()
+  const nextMonth = addMonthsKeepingBillingDay(baseDate, 1)
 
   const sala = await prisma.sala.update({
     where: { id },

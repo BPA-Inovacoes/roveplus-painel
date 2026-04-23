@@ -1,14 +1,19 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { LogIn, Phone, KeyRound, Shield, Sparkles } from 'lucide-react'
+import { LogIn, Phone, KeyRound, Shield, Sparkles, LifeBuoy } from 'lucide-react'
 import { useClientPortal } from '../contexts/ClientPortalContext'
+import { clientPortalApi } from '../api/clientPortal'
 
 export default function ClienteLogin() {
   const [whatsapp, setWhatsapp] = useState('')
   const [pin, setPin] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showRecover, setShowRecover] = useState(false)
+  const [recoverWhatsapp, setRecoverWhatsapp] = useState('')
+  const [recoverMsg, setRecoverMsg] = useState('')
+  const [recoverLoading, setRecoverLoading] = useState(false)
   const { login } = useClientPortal()
   const navigate = useNavigate()
 
@@ -23,6 +28,22 @@ export default function ClienteLogin() {
       setError(err instanceof Error ? err.message : 'Erro ao entrar')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleRecoverPin(e: React.FormEvent) {
+    e.preventDefault()
+    setRecoverMsg('')
+    setRecoverLoading(true)
+    try {
+      const r = await clientPortalApi.post<{ ok: boolean; message?: string }>('/api/client-portal/recover-pin', {
+        whatsapp: recoverWhatsapp,
+      })
+      setRecoverMsg(r.message || 'Pedido processado. Verifique o seu WhatsApp.')
+    } catch (err) {
+      setRecoverMsg(err instanceof Error ? err.message : 'Erro ao recuperar PIN.')
+    } finally {
+      setRecoverLoading(false)
     }
   }
 
@@ -157,6 +178,20 @@ export default function ClienteLogin() {
               </button>
             </form>
 
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setRecoverWhatsapp(whatsapp || '')
+                  setRecoverMsg('')
+                  setShowRecover(true)
+                }}
+                className="text-xs text-primary-300 hover:text-primary-200 underline underline-offset-2"
+              >
+                Recuperar PIN
+              </button>
+            </div>
+
             <p className="text-gray-500 text-sm mt-8 text-center leading-relaxed">
               É da equipa?{' '}
               <Link
@@ -169,6 +204,61 @@ export default function ClienteLogin() {
           </div>
         </motion.div>
       </div>
+
+      {showRecover && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-netflix-card rounded-2xl shadow-2xl border border-primary-500/30 max-w-sm w-full overflow-hidden">
+            <div className="p-6 border-b border-netflix-border/80">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-primary-500/20 text-primary-300 ring-1 ring-primary-500/30">
+                  <LifeBuoy className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold text-white">Recuperar PIN</h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Enviaremos um PIN temporário por WhatsApp</p>
+                </div>
+              </div>
+            </div>
+            <form onSubmit={handleRecoverPin}>
+              <div className="p-6 space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">WhatsApp</label>
+                  <input
+                    type="text"
+                    inputMode="tel"
+                    value={recoverWhatsapp}
+                    onChange={(e) => setRecoverWhatsapp(e.target.value)}
+                    className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-xl text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                    placeholder="+244 9XX XXX XXX"
+                    required
+                  />
+                </div>
+                {recoverMsg && (
+                  <div className="text-xs rounded-lg border border-netflix-border/80 bg-netflix-panel/60 text-gray-300 p-3">
+                    {recoverMsg}
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80 bg-netflix-panel/30">
+                <button
+                  type="button"
+                  onClick={() => setShowRecover(false)}
+                  className="flex-1 py-2.5 px-4 border border-netflix-border rounded-xl text-sm font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
+                >
+                  Fechar
+                </button>
+                <button
+                  type="submit"
+                  disabled={recoverLoading}
+                  className="flex-1 py-2.5 px-4 bg-primary-600 text-white rounded-xl text-sm font-medium hover:bg-primary-700 disabled:opacity-50 transition-colors shadow-lg shadow-primary-900/30"
+                >
+                  {recoverLoading ? 'A enviar…' : 'Enviar PIN'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

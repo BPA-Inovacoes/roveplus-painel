@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, Edit2, Trash2, Server } from 'lucide-react'
+import { Plus, Edit2, Trash2, Server, AlertTriangle, RefreshCw } from 'lucide-react'
 import { api } from '../api/client'
 import { useAlert } from '../contexts/AlertContext'
 
@@ -10,6 +10,8 @@ interface Servidor {
   tipo: string
   status: string
   totalClientes: number
+  mensalidade?: number | null
+  dataPagamento?: string | null
   servidorId?: number | null
   servidor?: { id: number; nome: string } | null
 }
@@ -24,6 +26,8 @@ export default function Servidores() {
     tipo: 'principal',
     status: 'online',
     servidorId: null,
+    mensalidade: null,
+    dataPagamento: null,
   })
 
   function load() {
@@ -50,14 +54,19 @@ export default function Servidores() {
       return
     }
     try {
-      const payload = { ...form, nome }
+      const payload = {
+        ...form,
+        nome,
+        mensalidade: form.tipo === 'principal' ? (form.mensalidade ?? null) : null,
+        dataPagamento: form.tipo === 'principal' ? (form.dataPagamento || null) : null,
+      }
       if (modal === 'new') {
         await api.post('/api/servidores', payload)
       } else if (form.id) {
         await api.patch(`/api/servidores/${form.id}`, payload)
       }
       setModal(null)
-      setForm({ nome: '', tipo: 'principal', status: 'online', servidorId: null })
+      setForm({ nome: '', tipo: 'principal', status: 'online', servidorId: null, mensalidade: null, dataPagamento: null })
       load()
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Erro ao guardar')
@@ -71,6 +80,25 @@ export default function Servidores() {
       load()
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Erro')
+    }
+  }
+
+  async function suspender(id: number) {
+    if (!confirm('Suspender este servidor? O estado ficará como Offline.')) return
+    try {
+      await api.post(`/api/servidores/${id}/suspender`, {})
+      load()
+    } catch (e) {
+      showError(e instanceof Error ? e.message : 'Erro ao suspender servidor')
+    }
+  }
+
+  async function pagarMesPrincipal(id: number, nome: string) {
+    try {
+      await api.post(`/api/servidores/${id}/pagar-mes-principal`, {})
+      load()
+    } catch (e) {
+      showError(e instanceof Error ? e.message : `Erro ao registar pagamento do servidor "${nome}"`)
     }
   }
 
@@ -100,7 +128,7 @@ export default function Servidores() {
         <button
           type="button"
           onClick={() => {
-            setForm({ nome: '', tipo: 'principal', status: 'online', servidorId: null })
+            setForm({ nome: '', tipo: 'principal', status: 'online', servidorId: null, mensalidade: null, dataPagamento: null })
             setModal('new')
           }}
           className="flex items-center gap-2 py-2 px-4 bg-primary-600 text-white rounded-lg hover:bg-primary-700 text-sm font-medium"
@@ -140,6 +168,16 @@ export default function Servidores() {
                   <p className="text-sm text-gray-400 mt-1">
                     <span className="font-medium">{s.totalClientes}</span> clientes
                   </p>
+                  {s.tipo === 'principal' && (
+                    <>
+                      <p className="text-sm text-gray-400 mt-1">
+                        Mensalidade: <span className="text-white font-medium">{Number(s.mensalidade ?? 0).toFixed(2)} kz</span>
+                      </p>
+                      <p className="text-sm text-gray-400">
+                        Pagamento: <span className="text-white font-medium">{s.dataPagamento ? new Date(s.dataPagamento).toLocaleDateString('pt-BR') : '—'}</span>
+                      </p>
+                    </>
+                  )}
                   <span
                     className={`inline-flex mt-2 px-2 py-0.5 rounded text-xs font-medium ${statusClass[s.status] || 'bg-gray-700 text-gray-300'}`}
                   >
@@ -148,6 +186,26 @@ export default function Servidores() {
                 </div>
               </div>
               <div className="flex gap-1">
+                {s.tipo === 'principal' && (
+                  <button
+                    type="button"
+                    onClick={() => pagarMesPrincipal(s.id, s.nome)}
+                    className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-emerald-500/60 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/30 hover:text-white shadow-sm shadow-emerald-900/40 transition-colors"
+                    title="Pagar +1 mês"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                  </button>
+                )}
+                {s.status !== 'offline' && (
+                  <button
+                    type="button"
+                    onClick={() => suspender(s.id)}
+                    className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-amber-500/50 bg-amber-500/10 text-amber-300 hover:bg-amber-500/30 hover:text-white shadow-sm shadow-amber-900/40 transition-colors"
+                    title="Suspender servidor"
+                  >
+                    <AlertTriangle className="w-4 h-4" />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -210,6 +268,8 @@ export default function Servidores() {
                       ...f,
                       tipo,
                       servidorId: tipo === 'secundario' ? f.servidorId : null,
+                      mensalidade: tipo === 'principal' ? (f.mensalidade ?? null) : null,
+                      dataPagamento: tipo === 'principal' ? (f.dataPagamento ?? null) : null,
                     }))
                   }}
                   className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
@@ -243,6 +303,31 @@ export default function Servidores() {
                       ))}
                   </select>
                 </div>
+              )}
+              {form.tipo === 'principal' && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-0.5">Mensalidade (kz)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={form.mensalidade ?? ''}
+                      onChange={(e) => setForm((f) => ({ ...f, mensalidade: e.target.value === '' ? null : Number(e.target.value) }))}
+                      placeholder="Ex: 25000"
+                      className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-0.5">Data de pagamento</label>
+                    <input
+                      type="date"
+                      value={form.dataPagamento ? String(form.dataPagamento).slice(0, 10) : ''}
+                      onChange={(e) => setForm((f) => ({ ...f, dataPagamento: e.target.value || null }))}
+                      className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                    />
+                  </div>
+                </>
               )}
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-0.5">Estado</label>

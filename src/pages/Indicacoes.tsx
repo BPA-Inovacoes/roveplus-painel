@@ -12,11 +12,12 @@ interface Indicacao {
   indicadoWhatsapp: string
   status: string
   createdAt: string
-  indicador: { id: number; nome: string; whatsapp: string }
+  indicador: { id: number; roveId?: string | null; nome: string; whatsapp: string }
 }
 
 interface Client {
   id: number
+  roveId?: string | null
   nome: string
 }
 
@@ -28,7 +29,7 @@ export default function Indicacoes() {
   const [filter, setFilter] = useState('')
   const [modal, setModal] = useState<'new' | 'edit' | null>(null)
   const [indicacaoToDelete, setIndicacaoToDelete] = useState<Indicacao | null>(null)
-  const [form, setForm] = useState({ id: 0, indicadorId: '', indicadoNome: '', indicadoWhatsapp: '', status: 'pendente' })
+  const [form, setForm] = useState({ id: 0, indicadorRoveId: '', indicadoNome: '', indicadoWhatsapp: '', status: 'pendente' })
   const [tablePage, setTablePage] = useState(1)
 
   function load() {
@@ -67,7 +68,7 @@ export default function Indicacoes() {
     const nome = (form.indicadoNome ?? '').trim()
     const whatsapp = (form.indicadoWhatsapp ?? '').trim()
     const isEdit = !!form.id
-    if (!isEdit && !form.indicadorId) {
+    if (!isEdit && !form.indicadorRoveId) {
       showWarning('Selecione o cliente que indicou.')
       return
     }
@@ -84,13 +85,13 @@ export default function Indicacoes() {
         })
       } else {
         await api.post('/api/indicacoes', {
-          indicadorId: form.indicadorId,
+          indicadorRoveId: form.indicadorRoveId,
           indicadoNome: nome,
           indicadoWhatsapp: whatsapp || undefined,
         })
       }
       setModal(null)
-      setForm({ id: 0, indicadorId: '', indicadoNome: '', indicadoWhatsapp: '', status: 'pendente' })
+      setForm({ id: 0, indicadorRoveId: '', indicadoNome: '', indicadoWhatsapp: '', status: 'pendente' })
       load()
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Erro ao guardar')
@@ -145,7 +146,7 @@ export default function Indicacoes() {
           <button
             type="button"
             onClick={() => {
-              setForm({ id: 0, indicadorId: '', indicadoNome: '', indicadoWhatsapp: '', status: 'pendente' })
+              setForm({ id: 0, indicadorRoveId: '', indicadoNome: '', indicadoWhatsapp: '', status: 'pendente' })
               setModal('new')
             }}
             className="flex items-center gap-2 py-2.5 px-5 bg-primary-600 text-white rounded-xl hover:bg-primary-700 text-sm font-medium shadow-lg shadow-primary-900/30 transition-colors shrink-0"
@@ -201,6 +202,7 @@ export default function Indicacoes() {
                     <td className="px-4 py-3 text-sm text-gray-400">{i.indicadoWhatsapp}</td>
                     <td className="px-4 py-3">
                       <span className="text-gray-200 text-sm">{i.indicador.nome}</span>
+                      <span className="text-primary-300 text-xs block">{i.indicador.roveId || 'Sem ID ROVE'}</span>
                       <span className="text-gray-500 text-xs block">{i.indicador.whatsapp}</span>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-400">
@@ -244,7 +246,7 @@ export default function Indicacoes() {
                           onClick={() => {
                             setForm({
                               id: i.id,
-                              indicadorId: String(i.indicadorId),
+                              indicadorRoveId: i.indicador.roveId ?? '',
                               indicadoNome: i.indicadoNome,
                               indicadoWhatsapp: i.indicadoWhatsapp,
                               status: i.status,
@@ -343,21 +345,21 @@ export default function Indicacoes() {
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-0.5">Quem indicou (cliente)</label>
                   <p className="px-3 py-2 bg-netflix-panel/50 border border-netflix-border rounded-lg text-sm text-gray-300">
-                    {clients.find((c) => String(c.id) === form.indicadorId)?.nome ?? '—'}
+                    {clients.find((c) => c.roveId === form.indicadorRoveId)?.nome ?? '—'}
                   </p>
                 </div>
               ) : (
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-0.5">Quem indicou (cliente)</label>
+                  <label className="block text-sm font-medium text-gray-300 mb-0.5">Quem indicou (ID ROVE)</label>
                   <select
-                    value={form.indicadorId}
-                    onChange={(e) => setForm((f) => ({ ...f, indicadorId: e.target.value }))}
+                    value={form.indicadorRoveId}
+                    onChange={(e) => setForm((f) => ({ ...f, indicadorRoveId: e.target.value }))}
                     className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
                   >
-                    <option value="">Selecione o cliente</option>
+                    <option value="">Selecione o cliente pelo ID ROVE</option>
                     {clients.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.nome}
+                      <option key={c.id} value={c.roveId ?? ''} disabled={!c.roveId}>
+                        {c.roveId ? `${c.roveId} - ${c.nome}` : `${c.nome} (sem ID ROVE)`}
                       </option>
                     ))}
                   </select>
@@ -400,7 +402,7 @@ export default function Indicacoes() {
             <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80">
               <button
                 type="button"
-                onClick={() => { setModal(null); setForm({ id: 0, indicadorId: '', indicadoNome: '', indicadoWhatsapp: '', status: 'pendente' }) }}
+                onClick={() => { setModal(null); setForm({ id: 0, indicadorRoveId: '', indicadoNome: '', indicadoWhatsapp: '', status: 'pendente' }) }}
                 className="flex-1 py-2.5 px-4 border border-netflix-border rounded-xl text-sm font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
               >
                 Cancelar

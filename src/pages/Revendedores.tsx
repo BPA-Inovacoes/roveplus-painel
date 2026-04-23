@@ -8,6 +8,7 @@ import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
 interface Servidor {
   id: number
   nome: string
+  tipo?: string
 }
 
 interface Revendedor {
@@ -36,6 +37,7 @@ export default function Revendedores() {
     observacoes: '',
   })
   const [tablePage, setTablePage] = useState(1)
+  const servidoresPrincipais = servidores.filter((s) => (s.tipo || 'principal') === 'principal')
 
   const totalTablePages = Math.max(1, Math.ceil(list.length / ROWS_PER_PAGE))
   const tablePageClamped = Math.min(tablePage, totalTablePages)
@@ -62,6 +64,10 @@ export default function Revendedores() {
   async function save() {
     if (!form.nome || !form.contacto) {
       showWarning('Nome e contacto são obrigatórios.')
+      return
+    }
+    if (!form.servidorId) {
+      showWarning('Servidor principal é obrigatório.')
       return
     }
     try {
@@ -395,14 +401,14 @@ export default function Revendedores() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-0.5">Servidor (opcional)</label>
+                <label className="block text-sm font-medium text-gray-300 mb-0.5">Servidor (obrigatório)</label>
                 <select
                   value={form.servidorId ?? ''}
                   onChange={(e) => setForm((f) => ({ ...f, servidorId: e.target.value ? Number(e.target.value) : null }))}
                   className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
                 >
-                  <option value="">Nenhum</option>
-                  {servidores.map((s) => (
+                  <option value="">Selecione o servidor principal</option>
+                  {servidoresPrincipais.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.nome}
                     </option>

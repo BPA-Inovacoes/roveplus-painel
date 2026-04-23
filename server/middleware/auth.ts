@@ -9,6 +9,8 @@ export interface AuthPayload {
   role: string
 }
 
+const PANEL_STAFF_ROLES = new Set(['admin', 'geral', 'netflix', 'iptv', 'suporte'])
+
 export function authMiddleware(req: Request, res: Response, next: NextFunction) {
   const token = req.cookies?.token || req.headers.authorization?.replace('Bearer ', '')
   if (!token) {
@@ -16,6 +18,9 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
   }
   try {
     const payload = jwt.verify(token, JWT_SECRET) as AuthPayload
+    if (!PANEL_STAFF_ROLES.has(payload.role)) {
+      return res.status(403).json({ error: 'Acesso recusado' })
+    }
     ;(req as Request & { user: AuthPayload }).user = payload
     next()
   } catch {

@@ -6,14 +6,73 @@ import { authMiddleware, getRoleServicoFilter, canAccessServico } from '../middl
 import type { AuthPayload } from '../middleware/auth.js'
 import { auditLog } from '../middleware/audit.js'
 import { sendWhatsAppMessage, templates, normalizeClientWhatsappKey } from '../services/whatsapp.js'
+import {
+  ensurePortalPinPlainColumn,
+  getPortalPinPlainMap,
+  setPortalPinPlainInDb,
+} from '../lib/portalPinPlain.js'
 
 const router = Router()
 
 router.use(authMiddleware)
 
 function stripPortalPinHash<T extends Record<string, unknown>>(c: T) {
-  const { portalPinHash: _p, ...rest } = c
+  const { portalPinHash: _p, portalPinPlain: _pp, ...rest } = c
   return rest
+}
+
+async function ensurePortalFirstLoginColumn(): Promise<void> {
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE clients
+    ADD COLUMN IF NOT EXISTS portal_first_login BOOLEAN NOT NULL DEFAULT false
+  `)
+}
+
+async function ensureRoveIdColumn(): Promise<void> {
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE clients
+    ADD COLUMN IF NOT EXISTS rove_id TEXT
+  `)
+  await prisma.$executeRawUnsafe(`
+    CREATE UNIQUE INDEX IF NOT EXISTS clients_rove_id_unique_idx
+    ON clients (rove_id)
+    WHERE rove_id IS NOT NULL
+  `)
+}
+
+function buildRoveIdCandidate(): string {
+  const year = new Date().getFullYear()
+  const random4 = Math.floor(1000 + Math.random() * 9000)
+  return `RV${year}${String(random4)}`
+}
+
+async function getRoveId(clientId: number): Promise<string | null> {
+  await ensureRoveIdColumn().catch(() => {})
+  const rows = await prisma.$queryRawUnsafe<Array<{ rove_id: string | null }>>(
+    'SELECT rove_id FROM clients WHERE id = $1 LIMIT 1',
+    clientId
+  )
+  return rows[0]?.rove_id ?? null
+}
+
+async function ensureClientRoveId(clientId: number): Promise<string> {
+  await ensureRoveIdColumn().catch(() => {})
+  const existing = await getRoveId(clientId)
+  if (existing) return existing
+
+  for (let i = 0; i < 30; i++) {
+    const candidate = buildRoveIdCandidate()
+    const used = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
+      'SELECT id FROM clients WHERE rove_id = $1 LIMIT 1',
+      candidate
+    )
+    if (used.length > 0) continue
+    await prisma.$executeRawUnsafe('UPDATE clients SET rove_id = $1 WHERE id = $2 AND rove_id IS NULL', candidate, clientId)
+    const assigned = await getRoveId(clientId)
+    if (assigned) return assigned
+  }
+
+  throw new Error('Não foi possível gerar ID ROVE único')
 }
 
 /** Adiciona N meses à data fim atual (mantém o dia; renovar = +1 mês, +2 meses, etc.). */
@@ -27,7 +86,9 @@ function adicionarMesesADataFim(base: Date, meses: number): Date {
 router.get('/', async (req, res) => {
   const { servico, servidorId, status, vencendo, revendedorId } = req.query
   const user = (req as unknown as { user: AuthPayload }).user
+  const includePortalPin = user.role === 'admin' && String(req.query.includePortalPin) === '1'
   const roleFilter = getRoleServicoFilter(user.role)
+  await ensurePortalPinPlainColumn().catch(() => {})
 
   // Atualizar automaticamente para vencido: clientes ativos cuja dataFim já passou
   const today = new Date()
@@ -72,15 +133,27 @@ router.get('/', async (req, res) => {
     include: { servidor: true, revendedor: true, sala: true },
     orderBy: { dataFim: 'asc' },
   })
-  res.json(
-    clients.map((c) => {
+  const pinPlainById = includePortalPin ? await getPortalPinPlainMap(clients.map((c) => c.id)) : null
+  const enriched = await Promise.all(
+    clients.map(async (c) => {
+      const roveId = await ensureClientRoveId(c.id)
       const areaClienteAtiva = !!c.portalPinHash
+      const base = stripPortalPinHash({ ...c, valor: Number(c.valor) } as Record<string, unknown>)
+      const fromDb = pinPlainById?.get(Number(c.id))
       return {
-        ...stripPortalPinHash({ ...c, valor: Number(c.valor) } as Record<string, unknown>),
+        ...base,
+        roveId,
         areaClienteAtiva,
+        ...(includePortalPin
+          ? {
+              portalPinPlain:
+                fromDb != null && String(fromDb) !== '' ? fromDb : null,
+            }
+          : {}),
       }
     })
   )
+  res.json(enriched)
 })
 
 router.get('/:id', async (req, res) => {
@@ -91,13 +164,16 @@ router.get('/:id', async (req, res) => {
   })
   if (!client) return res.status(404).json({ error: 'Cliente não encontrado' })
   if (!canAccessServico(user.role, client.servico)) return res.status(403).json({ error: 'Sem acesso a este cliente' })
+  const roveId = await ensureClientRoveId(client.id)
   res.json({
     ...stripPortalPinHash({ ...client, valor: Number(client.valor) } as Record<string, unknown>),
+    roveId,
     areaClienteAtiva: !!client.portalPinHash,
   })
 })
 
 router.post('/', auditLog('create_client', 'client'), async (req, res) => {
+  await ensurePortalPinPlainColumn().catch(() => {})
   const user = (req as unknown as { user: AuthPayload }).user
   const body = req.body
   const servico = body.servico || 'iptv'
@@ -115,6 +191,8 @@ router.post('/', auditLog('create_client', 'client'), async (req, res) => {
     }
     portalPinHash = await bcrypt.hash(String(body.portalPin).trim(), 10)
   }
+  const portalPlain =
+    body.portalPin != null && String(body.portalPin).trim() !== '' ? String(body.portalPin).trim() : null
   const client = await prisma.client.create({
     data: {
       nome: body.nome,
@@ -139,15 +217,25 @@ router.post('/', auditLog('create_client', 'client'), async (req, res) => {
       ...(portalPinHash ? { portalPinHash } : {}),
     },
   })
+  if (portalPinHash && portalPlain) {
+    await setPortalPinPlainInDb(client.id, portalPlain)
+  }
+  if (portalPinHash) {
+    await ensurePortalFirstLoginColumn().catch(() => {})
+    await prisma.$executeRawUnsafe('UPDATE clients SET portal_first_login = true WHERE id = $1', client.id).catch(() => {})
+  }
   const msg = templates.clienteCadastrado(client.nome, dataFim.toLocaleDateString('pt-BR'))
   void sendWhatsAppMessage(client.whatsapp, msg).catch(() => {})
+  const roveId = await ensureClientRoveId(client.id)
   res.status(201).json({
     ...stripPortalPinHash({ ...client, valor: Number(client.valor) } as Record<string, unknown>),
+    roveId,
     areaClienteAtiva: !!client.portalPinHash,
   })
 })
 
 router.patch('/:id', auditLog('update_client', 'client'), async (req, res) => {
+  await ensurePortalPinPlainColumn().catch(() => {})
   const user = (req as unknown as { user: AuthPayload }).user
   const id = Number(req.params.id)
   const existing = await prisma.client.findUnique({ where: { id } })
@@ -188,12 +276,25 @@ router.patch('/:id', auditLog('update_client', 'client'), async (req, res) => {
     } else if (String(body.portalPin).trim().length < 4) {
       return res.status(400).json({ error: 'PIN da área cliente deve ter pelo menos 4 caracteres' })
     } else {
-      data.portalPinHash = await bcrypt.hash(String(body.portalPin).trim(), 10)
+      const plain = String(body.portalPin).trim()
+      data.portalPinHash = await bcrypt.hash(plain, 10)
     }
   }
   const client = await prisma.client.update({ where: { id }, data })
+  if (body.portalPin !== undefined) {
+    if (body.portalPin === null || String(body.portalPin).trim() === '') {
+      await setPortalPinPlainInDb(id, null)
+    } else {
+      await setPortalPinPlainInDb(id, String(body.portalPin).trim())
+    }
+    await ensurePortalFirstLoginColumn().catch(() => {})
+    const mustChange = !(body.portalPin === null || String(body.portalPin).trim() === '')
+    await prisma.$executeRawUnsafe('UPDATE clients SET portal_first_login = $1 WHERE id = $2', mustChange, id).catch(() => {})
+  }
+  const roveId = await ensureClientRoveId(client.id)
   res.json({
     ...stripPortalPinHash({ ...client, valor: Number(client.valor) } as Record<string, unknown>),
+    roveId,
     areaClienteAtiva: !!client.portalPinHash,
   })
 })

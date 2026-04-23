@@ -10,13 +10,18 @@ const router = Router()
 // Configurar em vercel.json: "crons": [{ "path": "/api/cron/alertas", "schedule": "0 5 * * *" }]
 router.get('/alertas', async (req, res) => {
   const secret = process.env.CRON_SECRET
+  if (process.env.NODE_ENV === 'production' && !secret) {
+    return res
+      .status(503)
+      .json({ error: 'CRON não configurado. Defina CRON_SECRET no ambiente de produção.' })
+  }
   if (secret) {
     // Vercel Cron normalmente chama com Authorization: Bearer <CRON_SECRET>
     const auth = req.headers.authorization || ''
     const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : ''
     const querySecret = typeof req.query.secret === 'string' ? req.query.secret : ''
     if (token !== secret && querySecret !== secret) {
-      return res.status(401).json({ error: 'Unauthorized' })
+      return res.status(401).json({ error: 'Não autorizado' })
     }
   }
 

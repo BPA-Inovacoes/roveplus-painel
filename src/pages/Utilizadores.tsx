@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
-import { Edit2, Trash2, KeyRound, UserCog, AlertTriangle, CheckCircle, Smartphone, ExternalLink, Search } from 'lucide-react'
+import { Edit2, Trash2, KeyRound, UserCog, AlertTriangle, CheckCircle, Smartphone, ExternalLink, Search, Eye, EyeOff } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useAlert } from '../contexts/AlertContext'
 import { api } from '../api/client'
@@ -23,6 +23,8 @@ interface ClientAccessRow {
   servico: string
   status: string
   areaClienteAtiva?: boolean
+  /** Só com ?includePortalPin=1: último PIN em texto (painel, recuperação ou troca em /cliente) */
+  portalPinPlain?: string | null
 }
 
 const ROLES_OPERADORES = [
@@ -92,11 +94,13 @@ export default function Utilizadores() {
   const [clients, setClients] = useState<ClientAccessRow[]>([])
   const [clientsLoading, setClientsLoading] = useState(false)
   const [clientSearch, setClientSearch] = useState('')
+  const [serviceFilter, setServiceFilter] = useState<'todos' | 'iptv' | 'netflix'>('todos')
   const [portalFilter, setPortalFilter] = useState<'todos' | 'com' | 'sem'>('todos')
   const [clientTablePage, setClientTablePage] = useState(1)
   const [clientForPin, setClientForPin] = useState<ClientAccessRow | null>(null)
   const [pinForm, setPinForm] = useState({ pin: '', confirm: '' })
   const [clientToRevoke, setClientToRevoke] = useState<ClientAccessRow | null>(null)
+  const [revealPinIds, setRevealPinIds] = useState<Set<number>>(() => new Set())
 
   const totalTablePages = Math.max(1, Math.ceil(users.length / ROWS_PER_PAGE))
   const tablePageClamped = Math.min(tablePage, totalTablePages)
@@ -118,26 +122,52 @@ export default function Utilizadores() {
   useEffect(() => {
     if (section !== 'clientes') return
     let cancelled = false
-    setClientsLoading(true)
-    api
-      .get<ClientAccessRow[]>('/api/clients')
-      .then((data) => {
-        if (!cancelled) setClients(data)
-      })
-      .catch((e) => {
-        if (!cancelled) showError(e instanceof Error ? e.message : 'Erro ao carregar clientes')
-      })
-      .finally(() => {
-        if (!cancelled) setClientsLoading(false)
-      })
+
+    const loadClients = (opts: { resetReveal: boolean; withLoading: boolean }) => {
+      if (opts.withLoading) setClientsLoading(true)
+      return api
+        .get<ClientAccessRow[]>('/api/clients?includePortalPin=1')
+        .then((data) => {
+          if (cancelled) return
+          setClients(data)
+          if (opts.resetReveal) setRevealPinIds(new Set())
+        })
+        .catch((e) => {
+          if (!cancelled) showError(e instanceof Error ? e.message : 'Erro ao carregar clientes')
+        })
+        .finally(() => {
+          if (!cancelled && opts.withLoading) setClientsLoading(false)
+        })
+    }
+
+    void loadClients({ resetReveal: true, withLoading: true })
+
+    const refetch = () => {
+      if (document.visibilityState !== 'visible') return
+      void loadClients({ resetReveal: false, withLoading: false })
+    }
+    const onWindowFocus = () => {
+      void loadClients({ resetReveal: false, withLoading: false })
+    }
+    const poll = window.setInterval(() => {
+      void loadClients({ resetReveal: false, withLoading: false })
+    }, 20_000)
+
+    document.addEventListener('visibilitychange', refetch)
+    window.addEventListener('focus', onWindowFocus)
+
     return () => {
       cancelled = true
+      window.clearInterval(poll)
+      document.removeEventListener('visibilitychange', refetch)
+      window.removeEventListener('focus', onWindowFocus)
     }
   }, [section, showError])
 
   const filteredClients = useMemo(() => {
     const q = clientSearch.trim().toLowerCase()
     return clients.filter((c) => {
+      if (serviceFilter !== 'todos' && c.servico !== serviceFilter) return false
       if (portalFilter === 'com' && !c.areaClienteAtiva) return false
       if (portalFilter === 'sem' && c.areaClienteAtiva) return false
       if (!q) return true
@@ -146,7 +176,7 @@ export default function Utilizadores() {
         String(c.whatsapp).toLowerCase().includes(q)
       )
     })
-  }, [clients, clientSearch, portalFilter])
+  }, [clients, clientSearch, serviceFilter, portalFilter])
 
   const totalClientPages = Math.max(1, Math.ceil(filteredClients.length / ROWS_PER_PAGE))
   const clientPageClamped = Math.min(clientTablePage, totalClientPages)
@@ -157,7 +187,7 @@ export default function Utilizadores() {
 
   useEffect(() => {
     setClientTablePage(1)
-  }, [clientSearch, portalFilter])
+  }, [clientSearch, serviceFilter, portalFilter])
 
   async function confirmarPinCliente() {
     if (!clientForPin) return
@@ -176,7 +206,7 @@ export default function Utilizadores() {
       await api.patch(`/api/clients/${clientForPin.id}`, { portalPin: p })
       setClients((prev) =>
         prev.map((x) =>
-          x.id === clientForPin.id ? { ...x, areaClienteAtiva: true } : x
+          x.id === clientForPin.id ? { ...x, areaClienteAtiva: true, portalPinPlain: p } : x
         )
       )
       setClientForPin(null)
@@ -196,7 +226,9 @@ export default function Utilizadores() {
       await api.patch(`/api/clients/${clientToRevoke.id}`, { portalPin: '' })
       setClients((prev) =>
         prev.map((x) =>
-          x.id === clientToRevoke.id ? { ...x, areaClienteAtiva: false } : x
+          x.id === clientToRevoke.id
+            ? { ...x, areaClienteAtiva: false, portalPinPlain: null }
+            : x
         )
       )
       setClientToRevoke(null)
@@ -406,7 +438,7 @@ export default function Utilizadores() {
             }`}
           >
             <Smartphone className="w-4 h-4 shrink-0" />
-            Acesso clientes (/cliente)
+            Acesso clientes
           </button>
         </div>
 
@@ -620,21 +652,31 @@ export default function Utilizadores() {
                   className="w-full pl-10 pr-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500"
                 />
               </div>
-              <div className="flex flex-wrap gap-2">
-                {(['todos', 'com', 'sem'] as const).map((f) => (
-                  <button
-                    key={f}
-                    type="button"
-                    onClick={() => setPortalFilter(f)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                      portalFilter === f
-                        ? 'bg-primary-600 border-primary-500 text-white'
-                        : 'bg-netflix-panel/80 border-netflix-border/60 text-gray-300 hover:bg-netflix-hover'
-                    }`}
+              <div className="flex flex-wrap gap-2.5 items-center">
+                <div className="min-w-[230px] flex items-center gap-2">
+                  <label className="text-[11px] font-medium uppercase tracking-wide text-gray-500 whitespace-nowrap">Serviço</label>
+                  <select
+                    value={serviceFilter}
+                    onChange={(e) => setServiceFilter(e.target.value as 'todos' | 'iptv' | 'netflix')}
+                    className="flex-1 px-2.5 py-1.5 bg-netflix-panel border border-netflix-border rounded-lg text-xs text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
                   >
-                    {f === 'todos' ? 'Todos' : f === 'com' ? 'Com /cliente' : 'Sem /cliente'}
-                  </button>
-                ))}
+                    <option value="todos">Todos</option>
+                    <option value="iptv">Clientes IPTV</option>
+                    <option value="netflix">Clientes Netflix</option>
+                  </select>
+                </div>
+                <div className="min-w-[230px] flex items-center gap-2">
+                  <label className="text-[11px] font-medium uppercase tracking-wide text-gray-500 whitespace-nowrap">Área cliente</label>
+                  <select
+                    value={portalFilter}
+                    onChange={(e) => setPortalFilter(e.target.value as 'todos' | 'com' | 'sem')}
+                    className="flex-1 px-2.5 py-1.5 bg-netflix-panel border border-netflix-border rounded-lg text-xs text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                  >
+                    <option value="todos">Todos</option>
+                    <option value="com">Ativo</option>
+                    <option value="sem">Desativo</option>
+                  </select>
+                </div>
               </div>
             </div>
             <div className="bg-netflix-card/80 rounded-xl border border-netflix-border/80 shadow-lg shadow-black/40 overflow-hidden">
@@ -646,13 +688,14 @@ export default function Utilizadores() {
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">Serviço</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">Estado</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">Área /cliente</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">PIN /cliente</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wide">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-netflix-border/80">
                   {pagedClients.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500">
+                      <td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-500">
                         Nenhum cliente corresponde aos filtros.
                       </td>
                     </tr>
@@ -682,7 +725,50 @@ export default function Utilizadores() {
                               Ativo
                             </span>
                           ) : (
-                            <span className="text-xs text-gray-500">Sem PIN</span>
+                            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-400">
+                              <span className="h-2 w-2 rounded-full bg-gray-500" />
+                              Desativo
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-300">
+                          {c.areaClienteAtiva ? (
+                            <div className="flex items-start gap-2 min-w-0 max-w-md">
+                              <div className="min-w-0 flex-1">
+                                {!revealPinIds.has(c.id) ? (
+                                  <span className="font-mono">••••••</span>
+                                ) : c.portalPinPlain ? (
+                                  <span className="font-mono">{c.portalPinPlain}</span>
+                                ) : (
+                                  <p className="text-xs text-gray-400 font-sans font-normal leading-snug m-0">
+                                    Ainda não há PIN em texto no sistema (p.ex. registo antigo). Use o botão
+                                    «PIN» para redefinir e voltar a ver o valor aqui.
+                                  </p>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRevealPinIds((prev) => {
+                                    const n = new Set(prev)
+                                    if (n.has(c.id)) n.delete(c.id)
+                                    else n.add(c.id)
+                                    return n
+                                  })
+                                }}
+                                className="shrink-0 inline-flex items-center justify-center h-8 w-8 rounded-lg border border-netflix-border/80 text-gray-400 hover:text-white hover:border-primary-500/50 hover:bg-primary-500/10"
+                                title={revealPinIds.has(c.id) ? 'Ocultar' : 'Ver PIN ou informação'}
+                                aria-label={revealPinIds.has(c.id) ? 'Ocultar' : 'Ver PIN ou informação'}
+                              >
+                                {revealPinIds.has(c.id) ? (
+                                  <EyeOff className="w-4 h-4" />
+                                ) : (
+                                  <Eye className="w-4 h-4" />
+                                )}
+                              </button>
+                            </div>
+                          ) : (
+                            '—'
                           )}
                         </td>
                         <td className="px-4 py-3">

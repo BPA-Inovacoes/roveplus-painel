@@ -7,27 +7,73 @@ const router = Router()
 
 router.use(authMiddleware)
 
+async function ensureRoveIdColumn(): Promise<void> {
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE clients
+    ADD COLUMN IF NOT EXISTS rove_id TEXT
+  `)
+  await prisma.$executeRawUnsafe(`
+    CREATE UNIQUE INDEX IF NOT EXISTS clients_rove_id_unique_idx
+    ON clients (rove_id)
+    WHERE rove_id IS NOT NULL
+  `)
+}
+
 router.get('/', async (req, res) => {
   const { status } = req.query
   const where = status ? { status: String(status) } : {}
+  await ensureRoveIdColumn().catch(() => {})
   const list = await prisma.indicacao.findMany({
     where,
     include: { indicador: { select: { id: true, nome: true, whatsapp: true } } },
     orderBy: { createdAt: 'desc' },
   })
-  res.json(list)
+  const ids = Array.from(new Set(list.map((i) => i.indicadorId)))
+  const rows = ids.length
+    ? await prisma.$queryRawUnsafe<Array<{ id: number; rove_id: string | null }>>(
+        `SELECT id, rove_id FROM clients WHERE id = ANY($1::int[])`,
+        ids
+      ).catch(() => [])
+    : []
+  const roveMap = new Map<number, string | null>(rows.map((r) => [r.id, r.rove_id]))
+  res.json(
+    list.map((i) => ({
+      ...i,
+      indicador: { ...i.indicador, roveId: roveMap.get(i.indicadorId) ?? null },
+    }))
+  )
 })
 
 router.post('/', auditLog('create_indicacao', 'indicacao'), async (req, res) => {
-  const { indicadorId, indicadoNome, indicadoWhatsapp } = req.body
-  const idIndicador = Number(indicadorId)
-  if (!Number.isFinite(idIndicador) || idIndicador < 1) {
-    return res.status(400).json({ error: 'Cliente indicador inválido' })
-  }
+  const { indicadorId, indicadorRoveId, indicadoNome, indicadoWhatsapp } = req.body
   const nome = String(indicadoNome ?? '').trim()
   if (nome.length < 2) {
     return res.status(400).json({ error: 'Nome do indicado deve ter pelo menos 2 caracteres' })
   }
+  await ensureRoveIdColumn().catch(() => {})
+  let idIndicador: number | null = null
+
+  const roveRaw = String(indicadorRoveId ?? '').trim().toUpperCase()
+  if (roveRaw) {
+    const byRove = await prisma
+      .$queryRawUnsafe<Array<{ id: number }>>(
+        'SELECT id FROM clients WHERE rove_id = $1 LIMIT 1',
+        roveRaw
+      )
+      .then((r) => r[0] ?? null)
+      .catch(() => null)
+    if (!byRove) {
+      return res.status(404).json({ error: 'Cliente indicador não encontrado para o ID ROVE informado' })
+    }
+    idIndicador = byRove.id
+  } else {
+    const parsedId = Number(indicadorId)
+    if (!Number.isFinite(parsedId) || parsedId < 1) {
+      return res.status(400).json({ error: 'Cliente indicador inválido' })
+    }
+    idIndicador = parsedId
+  }
+
   const existe = await prisma.client.findUnique({ where: { id: idIndicador }, select: { id: true } })
   if (!existe) {
     return res.status(404).json({ error: 'Cliente indicador não encontrado' })

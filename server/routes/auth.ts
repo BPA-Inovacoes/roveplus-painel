@@ -3,12 +3,13 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { prisma } from '../lib/prisma.js'
 import { authMiddleware, type AuthPayload } from '../middleware/auth.js'
+import { panelLoginRateLimit } from '../middleware/rateLimits.js'
 
 const router = Router()
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-production'
 const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000 // 7 dias
 
-router.post('/login', async (req, res) => {
+router.post('/login', panelLoginRateLimit, async (req, res) => {
   const { email, password } = req.body
   if (!email || !password) {
     return res.status(400).json({ error: 'Email e senha obrigatórios' })
@@ -52,7 +53,11 @@ router.post('/login', async (req, res) => {
 })
 
 router.post('/logout', (_req, res) => {
-  res.clearCookie('token')
+  res.clearCookie('token', {
+    path: '/',
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+  })
   res.json({ ok: true })
 })
 

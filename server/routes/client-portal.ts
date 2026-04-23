@@ -2,14 +2,26 @@ import { Router, type Request } from 'express'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { prisma } from '../lib/prisma.js'
-import { normalizeClientWhatsappKey } from '../services/whatsapp.js'
+import { normalizeClientWhatsappKey, sendWhatsAppMessage } from '../services/whatsapp.js'
 import { clientPortalMiddleware, type ClientPortalJwtPayload } from '../middleware/clientPortalAuth.js'
+import { setPortalPinPlainInDb } from '../lib/portalPinPlain.js'
+import {
+  clientPortalAuthRateLimit,
+  clientPortalRecoverRateLimit,
+} from '../middleware/rateLimits.js'
 
 const router = Router()
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-production'
 const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000 // 7 dias
 
 type ClientPortalReq = Request & { clientPortal: ClientPortalJwtPayload }
+
+async function ensurePortalFirstLoginColumn(): Promise<void> {
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE clients
+    ADD COLUMN IF NOT EXISTS portal_first_login BOOLEAN NOT NULL DEFAULT false
+  `)
+}
 
 function diasAteDataFim(dataFim: Date): number {
   const today = new Date()
@@ -28,7 +40,12 @@ async function findClientByWhatsappInput(input: string) {
   return prisma.client.findUnique({ where: { id: hit.id } })
 }
 
-router.post('/login', async (req, res) => {
+function generateTemporaryPortalPin(): string {
+  // PIN temporário numérico para facilitar o primeiro acesso no telemóvel.
+  return String(Math.floor(100000 + Math.random() * 900000))
+}
+
+router.post('/login', clientPortalAuthRateLimit, async (req, res) => {
   const { whatsapp, pin } = req.body as { whatsapp?: string; pin?: string }
   if (!whatsapp || !pin) {
     return res.status(400).json({ error: 'WhatsApp e PIN são obrigatórios' })
@@ -62,18 +79,84 @@ router.post('/login', async (req, res) => {
   }
 })
 
+router.post('/recover-pin', clientPortalRecoverRateLimit, async (req, res) => {
+  await ensurePortalFirstLoginColumn().catch(() => {})
+  const { whatsapp } = req.body as { whatsapp?: string }
+  if (!whatsapp) {
+    return res.status(400).json({ error: 'WhatsApp é obrigatório.' })
+  }
+  try {
+    const client = await findClientByWhatsappInput(String(whatsapp))
+    // Resposta neutra para não expor se o número existe.
+    if (!client || client.status === 'cancelado') {
+      return res.json({
+        ok: true,
+        message:
+          'Se o número estiver registado e ativo, enviaremos um PIN temporário por WhatsApp em instantes.',
+      })
+    }
+
+    const tempPin = generateTemporaryPortalPin()
+    const msg = [
+      `Olá ${client.nome}!`,
+      'Recebemos um pedido de recuperação do PIN da sua área cliente Rove+.',
+      `PIN temporário: ${tempPin}`,
+      'Por segurança, entre e altere o PIN no primeiro acesso (mín. 6 caracteres).',
+    ].join('\n')
+    const sent = await sendWhatsAppMessage(client.whatsapp, msg).catch(() => false)
+    if (!sent) {
+      return res.status(503).json({
+        error:
+          'Não foi possível enviar o PIN temporário por WhatsApp neste momento. Tente novamente em instantes ou contacte o suporte.',
+      })
+    }
+
+    const hash = await bcrypt.hash(tempPin, 10)
+    await prisma.client.update({
+      where: { id: client.id },
+      data: { portalPinHash: hash },
+    })
+    try {
+      await setPortalPinPlainInDb(client.id, tempPin)
+    } catch (e) {
+      console.error('[client-portal] recover-pin portal_pin_plain', e)
+    }
+    await prisma.$executeRawUnsafe('UPDATE clients SET portal_first_login = true WHERE id = $1', client.id).catch(() => {})
+
+    return res.json({
+      ok: true,
+      message: 'PIN temporário enviado por WhatsApp. Use-o para entrar e altere-o no primeiro acesso.',
+    })
+  } catch (e) {
+    console.error('[client-portal] recover-pin', e)
+    return res.status(500).json({ error: 'Erro ao processar recuperação de PIN.' })
+  }
+})
+
 router.post('/logout', (_req, res) => {
-  res.clearCookie('client_token', { path: '/' })
+  res.clearCookie('client_token', {
+    path: '/',
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+  })
   res.json({ ok: true })
 })
 
 router.get('/me', clientPortalMiddleware, async (req, res) => {
   const { clientId } = (req as Request & { clientPortal: ClientPortalJwtPayload }).clientPortal
+  await ensurePortalFirstLoginColumn().catch(() => {})
   const client = await prisma.client.findUnique({
     where: { id: clientId },
     include: { sala: { select: { id: true, nome: true, dataFim: true } }, servidor: { select: { id: true, nome: true, status: true } }, revendedor: { select: { nome: true } } },
   })
   if (!client) return res.status(401).json({ error: 'Sessão inválida' })
+  const portalFlag = await prisma
+    .$queryRawUnsafe<Array<{ portal_first_login: boolean }>>(
+      'SELECT portal_first_login FROM clients WHERE id = $1',
+      clientId
+    )
+    .then((rows) => rows[0]?.portal_first_login ?? false)
+    .catch(() => false)
   res.json({
     id: client.id,
     nome: client.nome,
@@ -96,12 +179,14 @@ router.get('/me', clientPortalMiddleware, async (req, res) => {
     iptvM3u: client.iptvM3u,
     inscricaoPaga: client.inscricaoPaga,
     indicacoes: client.indicacoes,
+    portalFirstLogin: portalFlag,
   })
 })
 
 /** Avisos gerados a partir do estado da conta (renovação, lembrete WhatsApp, indicações, etc.). */
 router.get('/notificacoes', clientPortalMiddleware, async (req, res) => {
   const { clientId } = (req as ClientPortalReq).clientPortal
+  await ensurePortalFirstLoginColumn().catch(() => {})
   const client = await prisma.client.findUnique({
     where: { id: clientId },
     select: {
@@ -115,6 +200,13 @@ router.get('/notificacoes', clientPortalMiddleware, async (req, res) => {
   const indicacoesPendentes = await prisma.indicacao.count({
     where: { indicadorId: clientId, status: 'pendente' },
   })
+  const portalFirstLogin = await prisma
+    .$queryRawUnsafe<Array<{ portal_first_login: boolean }>>(
+      'SELECT portal_first_login FROM clients WHERE id = $1',
+      clientId
+    )
+    .then((rows) => rows[0]?.portal_first_login ?? false)
+    .catch(() => false)
 
   const items: Array<{
     id: string
@@ -208,8 +300,50 @@ router.get('/notificacoes', clientPortalMiddleware, async (req, res) => {
           : `Tem ${indicacoesPendentes} indicações pendentes de confirmação pela equipa.`,
     })
   }
+  if (portalFirstLogin) {
+    items.push({
+      id: 'primeiro-login-pin',
+      tipo: 'warning',
+      titulo: 'Primeiro acesso',
+      mensagem: 'Por segurança, altere agora o seu PIN de acesso da área cliente (mín. 6 caracteres).',
+    })
+  }
 
   res.json({ items })
+})
+
+router.post('/change-pin', clientPortalMiddleware, async (req, res) => {
+  const { clientId } = (req as ClientPortalReq).clientPortal
+  await ensurePortalFirstLoginColumn().catch(() => {})
+  const { currentPin, newPin } = req.body as { currentPin?: string; newPin?: string }
+  if (!currentPin || !newPin) {
+    return res.status(400).json({ error: 'PIN atual e novo PIN são obrigatórios.' })
+  }
+  const novo = String(newPin).trim()
+  if (novo.length < 6) {
+    return res.status(400).json({ error: 'O novo PIN deve ter pelo menos 6 caracteres.' })
+  }
+  const client = await prisma.client.findUnique({ where: { id: clientId } })
+  if (!client?.portalPinHash) {
+    return res.status(400).json({ error: 'Acesso da área cliente não está ativo para este cliente.' })
+  }
+  const ok = await bcrypt.compare(String(currentPin), client.portalPinHash)
+  if (!ok) {
+    return res.status(401).json({ error: 'PIN atual incorreto.' })
+  }
+  const hash = await bcrypt.hash(novo, 10)
+  await prisma.client.update({
+    where: { id: clientId },
+    data: { portalPinHash: hash },
+  })
+  // PIN em claro no painel admin (igual a definir no backoffice)
+  try {
+    await setPortalPinPlainInDb(clientId, novo)
+  } catch (e) {
+    console.error('[client-portal] change-pin portal_pin_plain', e)
+  }
+  await prisma.$executeRawUnsafe('UPDATE clients SET portal_first_login = false WHERE id = $1', clientId).catch(() => {})
+  res.json({ ok: true })
 })
 
 /** Lista de indicações feitas por este cliente (área /cliente). */

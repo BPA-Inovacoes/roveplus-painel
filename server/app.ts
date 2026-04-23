@@ -1,8 +1,10 @@
 import 'express-async-errors'
 import express from 'express'
 import cors from 'cors'
+import helmet from 'helmet'
 import cookieParser from 'cookie-parser'
 import { prisma } from './lib/prisma.js'
+import { getCorsOptions } from './middleware/corsConfig.js'
 import authRoutes from './routes/auth.js'
 import dashboardRoutes from './routes/dashboard.js'
 import clientsRoutes from './routes/clients.js'
@@ -17,9 +19,17 @@ import clientPortalRoutes from './routes/client-portal.js'
 
 const app = express()
 
-app.use(cors({ origin: true, credentials: true }))
+if (process.env.VERCEL === '1' || process.env.TRUST_PROXY === '1') {
+  app.set('trust proxy', 1)
+}
+
+// Cabeçalhos HTTP (API JSON; sem CSP de página)
+app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'cross-origin' } }))
+
+app.use(cors(getCorsOptions()))
 app.use(cookieParser())
-app.use(express.json())
+app.use(express.json({ limit: '1mb' }))
+app.use(express.urlencoded({ extended: true, limit: '1mb' }))
 
 app.use('/api/auth', authRoutes)
 app.use('/api/dashboard', dashboardRoutes)
@@ -42,11 +52,21 @@ app.get('/api/health', async (_req, res) => {
   }
 })
 
-// Handler de erros global – captura erros não tratados nas rotas
+// Rotas /api inexistentes
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'Não encontrado' })
+})
+
+// Erros (em produção não enviar pormenores ao cliente)
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[API] Erro:', err)
   const message = err instanceof Error ? err.message : 'Erro interno'
-  res.status(500).json({ error: 'Internal Server Error', detail: message })
+  const isProd = process.env.NODE_ENV === 'production'
+  if (isProd) {
+    res.status(500).json({ error: 'Internal Server Error' })
+  } else {
+    res.status(500).json({ error: 'Internal Server Error', detail: message })
+  }
 })
 
 export default app

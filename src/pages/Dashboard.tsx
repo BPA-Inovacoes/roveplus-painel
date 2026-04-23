@@ -20,6 +20,7 @@ import {
   Users,
   DollarSign,
   AlertCircle,
+  AlertTriangle,
   Gift,
   Server,
   ChevronRight,
@@ -39,7 +40,12 @@ interface DashboardData {
   totalClientes: number
   clientesVencidos?: number
   clientesCancelados?: number
+  clientesVencidosNetflix?: number
+  clientesVencidosIptv?: number
+  clientesCanceladosNetflix?: number
+  clientesCanceladosIptv?: number
   clientsByServidor: { id: number; nome: string; totalClientes: number; status: string }[]
+  clientsBySala?: { id: number; nome: string; totalClientes: number }[]
   vencendoHoje: number
   vencendoEm7Dias?: number
   clientesNovosEsteMes?: number
@@ -69,8 +75,11 @@ export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [servidorTablePage, setServidorTablePage] = useState(1)
+  const [salaTablePage, setSalaTablePage] = useState(1)
+  const [suspendingServidorId, setSuspendingServidorId] = useState<number | null>(null)
 
-  useEffect(() => {
+  const loadDashboard = () => {
+    setLoading(true)
     api
       .get<DashboardData>('/api/dashboard')
       .then(setData)
@@ -79,7 +88,24 @@ export default function Dashboard() {
         showError(e instanceof Error ? e.message : 'Não foi possível carregar o dashboard.')
       })
       .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    loadDashboard()
   }, [showError])
+
+  async function suspenderServidor(id: number, nome: string) {
+    if (!confirm(`Suspender servidor "${nome}"? O estado ficará Offline.`)) return
+    setSuspendingServidorId(id)
+    try {
+      await api.post(`/api/servidores/${id}/suspender`, {})
+      loadDashboard()
+    } catch (e) {
+      showError(e instanceof Error ? e.message : 'Não foi possível suspender o servidor.')
+    } finally {
+      setSuspendingServidorId(null)
+    }
+  }
 
   if (loading) {
     return (
@@ -101,6 +127,24 @@ export default function Dashboard() {
     { name: 'IPTV', value: data?.totalIptv ?? 0, color: CHART_COLORS.primaryLight },
   ].filter((d) => d.value > 0)
   const barData = (data?.clientsByServidor ?? []).map((s) => ({ nome: s.nome, clientes: s.totalClientes }))
+  const salaBarData = (data?.clientsBySala ?? []).map((s) => ({ nome: s.nome, clientes: s.totalClientes }))
+  const totalNonActive =
+    (data?.clientesVencidosNetflix ?? 0) +
+    (data?.clientesVencidosIptv ?? 0) +
+    (data?.clientesCanceladosNetflix ?? 0) +
+    (data?.clientesCanceladosIptv ?? 0)
+  const nonActivePieData = [
+    {
+      name: 'Netflix',
+      value: (data?.clientesVencidosNetflix ?? 0) + (data?.clientesCanceladosNetflix ?? 0),
+      color: CHART_COLORS.primary,
+    },
+    {
+      name: 'IPTV',
+      value: (data?.clientesVencidosIptv ?? 0) + (data?.clientesCanceladosIptv ?? 0),
+      color: CHART_COLORS.primaryLight,
+    },
+  ].filter((d) => d.value > 0)
 
   return (
     <motion.div
@@ -268,8 +312,8 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Gráficos: linha receita + doughnut distribuição */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Gráficos: receita + distribuição + não ativos */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
         <div className="rounded-xl border border-netflix-border/80 bg-netflix-card/80 p-6 shadow-lg shadow-black/20">
           <h3 className="text-base font-semibold text-white">Receita por mês (kz)</h3>
           <p className="text-sm text-gray-400 mt-0.5 mb-4">Últimos 6 meses. Valores estimados com base nas datas de vencimento dos clientes.</p>
@@ -366,14 +410,59 @@ export default function Dashboard() {
             )}
           </div>
         </div>
+
+        <div className="rounded-xl border border-netflix-border/80 bg-netflix-card/80 p-6 shadow-lg shadow-black/20">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+            <h3 className="text-base font-semibold text-white">Não ativos por serviço</h3>
+            <span className="text-xs text-gray-400">Netflix vs IPTV (vencidos + cancelados)</span>
+          </div>
+          <div className="h-[220px] flex items-center justify-center">
+            {totalNonActive > 0 && nonActivePieData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={nonActivePieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={50}
+                    outerRadius={78}
+                    paddingAngle={2}
+                    dataKey="value"
+                    label={({ name, value }) => `${name}: ${value}`}
+                    labelLine={{ stroke: '#9ca3af' }}
+                  >
+                    {nonActivePieData.map((entry, index) => (
+                      <Cell key={`na-cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#1f2937',
+                      border: '1px solid #374151',
+                      borderRadius: '8px',
+                      color: '#f3f4f6',
+                    }}
+                    formatter={((value: number | undefined) => [value ?? 0, 'Clientes']) as any}
+                  />
+                  <Legend
+                    wrapperStyle={{ fontSize: '12px' }}
+                    formatter={(value) => <span className="text-gray-300">{value}</span>}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="text-gray-500 text-sm">Nenhum cliente não ativo no momento.</div>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* Segunda linha: barras clientes por servidor + indicações */}
+      {/* Segunda linha: clientes por servidor + clientes por sala */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {barData.length > 0 && (
-          <div className="rounded-xl border border-netflix-border/80 bg-netflix-card/80 p-6 shadow-lg shadow-black/20">
-            <h3 className="text-base font-semibold text-white mb-4">Clientes por servidor</h3>
-            <div className="h-[220px]">
+        <div className="rounded-xl border border-netflix-border/80 bg-netflix-card/80 p-6 shadow-lg shadow-black/20">
+          <h3 className="text-base font-semibold text-white mb-4">Clientes por servidor</h3>
+          <div className="h-[220px]">
+            {barData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={barData} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} />
@@ -398,14 +487,57 @@ export default function Dashboard() {
                   <Bar dataKey="clientes" fill={CHART_COLORS.primary} radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
-            </div>
+            ) : (
+              <div className="h-full flex items-center justify-center text-gray-500 text-sm">
+                Sem dados de servidores.
+              </div>
+            )}
           </div>
-        )}
+        </div>
+
+        <div className="rounded-xl border border-netflix-border/80 bg-netflix-card/80 p-6 shadow-lg shadow-black/20">
+          <h3 className="text-base font-semibold text-white mb-4">Clientes por sala</h3>
+          <div className="h-[220px]">
+            {salaBarData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={salaBarData} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} />
+                  <XAxis type="number" tick={{ fill: '#9ca3af', fontSize: 11 }} />
+                  <YAxis
+                    type="category"
+                    dataKey="nome"
+                    width={80}
+                    tick={{ fill: '#9ca3af', fontSize: 11 }}
+                    axisLine={{ stroke: '#374151' }}
+                    tickLine={false}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#1f2937',
+                      border: '1px solid #374151',
+                      borderRadius: '8px',
+                      color: '#f3f4f6',
+                    }}
+                    formatter={((value: number | undefined) => [value ?? 0, 'Clientes']) as any}
+                  />
+                  <Bar dataKey="clientes" fill="#8b5cf6" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex items-center justify-center text-gray-500 text-sm">
+                Sem dados de salas.
+              </div>
+            )}
+          </div>
+        </div>
+
       </div>
 
-      {/* Tabela: Clientes por servidor */}
-      {data?.clientsByServidor && data.clientsByServidor.length > 0 && (
-        <div className="rounded-xl border border-netflix-border/80 bg-netflix-card/80 shadow-lg shadow-black/40 overflow-hidden">
+      {/* Tabelas: Clientes por servidor + por sala */}
+      {(data?.clientsByServidor?.length || data?.clientsBySala?.length) ? (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          {data?.clientsByServidor && data.clientsByServidor.length > 0 && (
+            <div className="rounded-xl border border-netflix-border/80 bg-netflix-card/80 shadow-lg shadow-black/40 overflow-hidden">
           <div className="px-5 py-4 border-b border-netflix-border/80 flex items-center justify-between">
             <h3 className="text-base font-semibold text-white">Clientes por servidor</h3>
             <Link
@@ -424,6 +556,7 @@ export default function Dashboard() {
                   <th className="px-5 py-3.5 font-medium">Servidor</th>
                   <th className="px-5 py-3.5 font-medium">Clientes</th>
                   <th className="px-5 py-3.5 font-medium">Estado</th>
+                  <th className="px-5 py-3.5 font-medium text-right">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-netflix-border/80 text-gray-200">
@@ -459,6 +592,23 @@ export default function Dashboard() {
                         {s.status}
                       </span>
                     </td>
+                    <td className="px-5 py-3">
+                      <div className="flex justify-end">
+                        {s.status !== 'offline' ? (
+                          <button
+                            type="button"
+                            onClick={() => suspenderServidor(s.id, s.nome)}
+                            disabled={suspendingServidorId === s.id}
+                            className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-amber-500/50 bg-amber-500/10 text-amber-300 hover:bg-amber-500/30 hover:text-white disabled:opacity-50 shadow-sm shadow-amber-900/40 transition-colors"
+                            title="Suspender servidor"
+                          >
+                            <AlertTriangle className="w-4 h-4" />
+                          </button>
+                        ) : (
+                          <span className="text-xs text-gray-500">—</span>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                   ));
                 })()}
@@ -472,8 +622,68 @@ export default function Dashboard() {
               onPageChange={setServidorTablePage}
             />
           )}
+            </div>
+          )}
+
+          {data?.clientsBySala && data.clientsBySala.length > 0 && (
+            <div className="rounded-xl border border-netflix-border/80 bg-netflix-card/80 shadow-lg shadow-black/40 overflow-hidden">
+          <div className="px-5 py-4 border-b border-netflix-border/80 flex items-center justify-between">
+            <h3 className="text-base font-semibold text-white">Clientes por sala</h3>
+            <Link
+              to="/salas"
+              className="text-sm text-primary-400 hover:text-primary-300 font-medium inline-flex items-center gap-1"
+            >
+              Ver salas
+              <ChevronRight className="w-4 h-4" />
+            </Link>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-netflix-panel/80 text-gray-300 text-sm">
+                <tr>
+                  <th className="px-5 py-3.5 font-medium w-12 text-center">Nº</th>
+                  <th className="px-5 py-3.5 font-medium">Sala</th>
+                  <th className="px-5 py-3.5 font-medium">Clientes</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-netflix-border/80 text-gray-200">
+                {(() => {
+                  const salaList = data.clientsBySala ?? []
+                  const totalPages = Math.max(1, Math.ceil(salaList.length / ROWS_PER_PAGE))
+                  const page = Math.min(salaTablePage, totalPages)
+                  const paged = salaList.slice((page - 1) * ROWS_PER_PAGE, page * ROWS_PER_PAGE)
+                  return paged.map((s, idx) => (
+                    <tr key={s.id} className="hover:bg-netflix-hover/80 transition-colors">
+                      <td className="px-5 py-3 text-center text-gray-400 text-sm">
+                        {(page - 1) * ROWS_PER_PAGE + idx + 1}
+                      </td>
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-lg bg-violet-500/20 text-violet-300">
+                            <LayoutGrid className="w-4 h-4" />
+                          </div>
+                          <span className="font-medium text-white">{s.nome}</span>
+                        </div>
+                      </td>
+                      <td className="px-5 py-3 text-sm font-medium text-white">{s.totalClientes}</td>
+                    </tr>
+                  ))
+                })()}
+              </tbody>
+            </table>
+          </div>
+          {data.clientsBySala.length > ROWS_PER_PAGE && (
+            <TablePagination
+              totalItems={data.clientsBySala.length}
+              currentPage={Math.min(salaTablePage, Math.max(1, Math.ceil(data.clientsBySala.length / ROWS_PER_PAGE)))}
+              onPageChange={setSalaTablePage}
+            />
+          )}
+            </div>
+          )}
         </div>
-      )}
+      ) : null}
+
     </motion.div>
   )
 }

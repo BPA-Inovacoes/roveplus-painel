@@ -52,6 +52,10 @@ router.get('/', async (req, res) => {
     vencendoEm7Dias,
     clientesVencidos,
     clientesCancelados,
+    clientesVencidosNetflix,
+    clientesVencidosIptv,
+    clientesCanceladosNetflix,
+    clientesCanceladosIptv,
     clientesNovosEsteMes,
     indicacoesTotal,
     indicacoesPendentes,
@@ -65,6 +69,7 @@ router.get('/', async (req, res) => {
     servidoresList,
     salasVencendo,
     salasVencidas,
+    salas,
   ] = await Promise.all([
     roleFilter === 'iptv' ? 0 : prisma.client.count({ where: clientWhereNetflix }),
     roleFilter === 'netflix' ? 0 : prisma.client.count({ where: clientWhereIptv }),
@@ -84,6 +89,10 @@ router.get('/', async (req, res) => {
     }),
     prisma.client.count({ where: clientWhereVencido }),
     prisma.client.count({ where: clientWhereCancelado }),
+    prisma.client.count({ where: { ...clientWhereVencido, servico: 'netflix' } }),
+    prisma.client.count({ where: { ...clientWhereVencido, servico: 'iptv' } }),
+    prisma.client.count({ where: { ...clientWhereCancelado, servico: 'netflix' } }),
+    prisma.client.count({ where: { ...clientWhereCancelado, servico: 'iptv' } }),
     prisma.client.count({
       where: { ...clientWhereRole, createdAt: { gte: inicioMes, lte: fimMes } },
     }),
@@ -115,6 +124,15 @@ router.get('/', async (req, res) => {
       : [],
     canAccessSalas(user.role) ? prisma.sala.count({ where: salasVencendoWhere }) : 0,
     canAccessSalas(user.role) ? prisma.sala.count({ where: salasVencidasWhere }) : 0,
+    canAccessSalas(user.role)
+      ? prisma.sala.findMany({
+          select: {
+            id: true,
+            nome: true,
+            _count: { select: { clients: true } },
+          },
+        })
+      : [],
   ])
 
   // Receita do mês = soma dos valores dos clientes cujo vencimento (dataFim) cai no mês atual (dia 1 a fim do mês)
@@ -199,6 +217,10 @@ router.get('/', async (req, res) => {
     totalClientes: totalNetflix + totalIptv,
     clientesVencidos,
     clientesCancelados,
+    clientesVencidosNetflix,
+    clientesVencidosIptv,
+    clientesCanceladosNetflix,
+    clientesCanceladosIptv,
     vencendoHoje,
     vencendoEm7Dias,
     clientesNovosEsteMes,
@@ -207,6 +229,13 @@ router.get('/', async (req, res) => {
           id: s.id,
           nome: s.nome,
           status: s.status,
+          totalClientes: s._count.clients,
+        }))
+      : [],
+    clientsBySala: canAccessSalas(user.role)
+      ? salas.map((s: { id: number; nome: string; _count: { clients: number } }) => ({
+          id: s.id,
+          nome: s.nome,
           totalClientes: s._count.clients,
         }))
       : [],

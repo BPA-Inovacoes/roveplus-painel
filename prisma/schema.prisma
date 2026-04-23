@@ -27,6 +27,7 @@ model User {
 // Clientes (Netflix + IPTV)
 model Client {
   id          Int       @id @default(autoincrement())
+  roveId      String?   @unique @map("rove_id") // Ex: RV20260798
   nome        String
   whatsapp    String
   localizacao String?   // localização do cliente
@@ -53,6 +54,8 @@ model Client {
   indicacoes    Int       @default(0)       // total de indicações deste cliente
   whatsappNotificadoVencimentoAt DateTime? @map("whatsapp_notificado_vencimento_at")
   portalPinHash String? @map("portal_pin_hash") // PIN bcrypt para login em /cliente
+  portalPinPlain String? @map("portal_pin_plain") // Último PIN em claro p/ admins; actualizado no painel, recuperação e troca em /cliente
+  portalFirstLogin Boolean @default(false) @map("portal_first_login") // true quando admin define PIN e cliente ainda não trocou
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -86,6 +89,8 @@ model Servidor {
   servidor      Servidor? @relation("primary", fields: [servidorId], references: [id])
   secundarios   Servidor[] @relation("primary")
   totalClientes Int      @default(0) @map("total_clientes")
+  mensalidade   Decimal? @db.Decimal(10, 2) // custo mensal do servidor (principal)
+  dataPagamento DateTime? @map("data_pagamento") // próxima data de pagamento do servidor
   status        String    @default("online")    // online | instável | offline
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt

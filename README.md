@@ -115,7 +115,7 @@ Se a conexão falhar, confirma a URL (user, password, host, porta) e, em serviç
    npm run dev:all
    ```
    - Frontend: http://localhost:3000 (login é a primeira página)
-   - API: http://localhost:3001 (o Vite faz proxy de `/api` para a API)
+   - API:   (o Vite faz proxy de `/api` para a API)
 
    Ou em terminais separados:
    ```bash

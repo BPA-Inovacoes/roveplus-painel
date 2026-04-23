@@ -1,112 +1,88 @@
-# API de WhatsApp – Rove+ Painel
+# API de WhatsApp - Rove+ Painel
 
-Microserviço Node.js que recebe requisições HTTP e envia mensagens via **WhatsApp Web** (whatsapp-web.js). Pensado para integrar com o backend do Rove+ Painel.
+Microservico Node.js que recebe chamadas HTTP e envia mensagens via WhatsApp Web (`whatsapp-web.js`).
 
 ## Requisitos
 
 - Node.js 18+
-- Número de WhatsApp (será ligado via QR Code)
+- Numero de WhatsApp para ligar via QR Code
 
-## Instalação
+## Instalacao
 
 ```bash
 cd whatsapp-api
 npm install
 ```
 
-## Como iniciar o servidor
-
-```bash
-node server .js
-```
-
-Ou, com o script do package.json:
+## Arrancar o servico
 
 ```bash
 npm start
 ```
 
-O servidor sobe na **porta 3002** por defeito (ou na variável `PORT`), para não conflitar com o backend do Rove+ (3001). Na primeira execução aparece um **QR Code no terminal**.
+Ou diretamente:
 
-No Rove+, define `WHATSAPP_API_URL=http://localhost:3002`.
+```bash
+node server.js
+```
 
-## Testar a API
+Por defeito, a API sobe em `http://localhost:3002` (ou `PORT` se definida).
 
-1. **Arranca a API** (num terminal): `npm start` e escaneia o QR Code se for a primeira vez.
-2. **Estado da ligação:** no browser abre [http://localhost:3002/status](http://localhost:3002/status) — deve mostrar `{ "connected": true }` quando estiver ligado.
-3. **Enviar mensagem de teste:** na pasta `whatsapp-api` corre  
-   `node test-api.js`  
-   (envia para 244922858762 por defeito). Para outro número:  
-   `node test-api.js 244912345678`  
-   Se usares `WHATSAPP_TOKEN`, define a variável antes:  
-   `set WHATSAPP_TOKEN=teu_token` (Windows) ou `WHATSAPP_TOKEN=teu_token node test-api.js` (Linux/Mac).
+## Ligar o WhatsApp (QR Code)
 
-## Como conectar o WhatsApp
+1. Arranca a API com `npm start`.
+2. No terminal vai aparecer um QR Code.
+3. No telemovel: WhatsApp -> Dispositivos ligados -> Ligar um dispositivo.
+4. Escaneia o QR.
+5. Quando conectar, o terminal mostra: `WhatsApp conectado!`.
 
-1. No **telemóvel**, abre o WhatsApp.
-2. Vai a **Definições** (ou Menu) → **Dispositivos ligados** → **Ligar um dispositivo**.
-3. **Escaneia o QR Code** que aparece no terminal onde correu `node server.js`.
-4. Quando ligar, no terminal aparece: **"WhatsApp conectado!"**
-5. A sessão fica guardada em `.wwebjs_auth/` (LocalAuth). Nas próximas vezes pode não ser preciso escanear de novo, desde que não apagues essa pasta.
+A sessao fica persistida em `.wwebjs_auth/` (ou no caminho de `WWEBJS_AUTH_PATH`).
 
-## Variáveis de ambiente
+## Variaveis de ambiente
 
-| Variável           | Obrigatório | Descrição |
-|-------------------|-------------|-----------|
-| `PORT`            | Não         | Porta do servidor (default: 3001). |
-| `WHATSAPP_TOKEN`  | Recomendado | Token para o header `Authorization: Bearer ...`. Se não definires, a API aceita qualquer requisição (apenas para desenvolvimento). |
-| `WWEBJS_AUTH_PATH`| Não         | Caminho persistente para a sessão do LocalAuth (default: `./.wwebjs_auth`). Em VPS/Docker, monta um volume neste path. |
+| Variavel | Obrigatorio | Descricao |
+|---|---|---|
+| `PORT` | Nao | Porta da API (default: `3002`). |
+| `WHATSAPP_TOKEN` | Recomendado | Token para proteger endpoints (`Authorization: Bearer ...`). |
+| `WWEBJS_AUTH_PATH` | Nao | Caminho da sessao local do WhatsApp (default: `./.wwebjs_auth`). |
 
 Exemplo `.env`:
 
 ```env
-PORT=3001
+PORT=3002
 WHATSAPP_TOKEN=seu_token_secreto
-WWEBJS_AUTH_PATH=/app/.wwebjs_auth
+WWEBJS_AUTH_PATH=./.wwebjs_auth
 ```
 
 ## Endpoints
 
-### GET /status
+### `GET /status`
 
-Indica se o WhatsApp está ligado.
-
-**Resposta (200):**
+Retorna estado da ligacao com o WhatsApp.
 
 ```json
 { "connected": true }
 ```
 
-ou
+### `POST /send`
 
-```json
-{ "connected": false }
-```
+Envia mensagem para um numero.
 
----
-
-### POST /send
-
-Envia uma mensagem de texto para um número.
-
-**Headers:**
+Headers:
 
 - `Content-Type: application/json`
-- `Authorization: Bearer WHATSAPP_TOKEN` (se `WHATSAPP_TOKEN` estiver definido)
+- `Authorization: Bearer <WHATSAPP_TOKEN>` (quando `WHATSAPP_TOKEN` estiver definido)
 
-**Body (JSON):**
+Body:
 
 ```json
 {
-  "phone": "244XXXXXXXXX",
+  "phone": "244912345678",
   "message": "texto da mensagem"
 }
 ```
 
-- `phone`: número com indicativo (ex: 244912345678 ou "244 912 345 678").
-- `message`: texto a enviar.
-
-**Sucesso (200):**
+Resposta de sucesso:
 
 ```json
 {
@@ -115,71 +91,76 @@ Envia uma mensagem de texto para um número.
 }
 ```
 
-**Erro (4xx/5xx):**
+Erros comuns:
 
-```json
-{
-  "success": false,
-  "error": "descrição do erro"
-}
-```
+- `400`: phone/message invalidos
+- `401`: token ausente/invalido (se token configurado)
+- `503`: WhatsApp nao conectado
+- `500`: falha no envio
 
-Se o token estiver errado ou em falta (quando obrigatório): **401 Unauthorized**.
+### `GET /health`
 
----
-
-### GET /health
-
-Estado do serviço e do WhatsApp (útil para monitorização). Não exige token.
+Health check simples (util para monitorizacao):
 
 ```json
 { "ok": true, "whatsapp": true }
 ```
 
-## Como o backend do Rove+ deve chamar a API
+## Teste rapido
 
-Configura no Rove+ as variáveis:
+Na pasta `whatsapp-api`:
 
-- `WHATSAPP_API_URL` = URL base da API (ex: `http://localhost:3001` ou `http://ip-da-vps:3001`)
-- `WHATSAPP_TOKEN` = mesmo valor usado em `WHATSAPP_TOKEN` nesta API
+```bash
+node test-api.js
+```
 
-Exemplo de envio a partir do backend (Node/Express):
+Enviar para outro numero:
 
-```javascript
-const ok = await fetch(process.env.WHATSAPP_API_URL + '/send', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'Authorization': 'Bearer ' + process.env.WHATSAPP_TOKEN,
-  },
-  body: JSON.stringify({
-    phone: cliente.whatsapp,   // ex: "244 912 345 678"
-    message: 'O seu acesso vence em 3 dias.',
-  }),
-})
-const data = await ok.json()
-if (!data.success) {
-  console.error('Falha ao enviar WhatsApp:', data.error)
+```bash
+node test-api.js 244912345678
+```
+
+Se usares token:
+
+- Windows (PowerShell):
+  ```powershell
+  $env:WHATSAPP_TOKEN="seu_token"
+  node test-api.js
+  ```
+- Linux/macOS:
+  ```bash
+  WHATSAPP_TOKEN=seu_token node test-api.js
+  ```
+
+## Integracao com o backend do Rove+
+
+No backend principal, configura:
+
+- `WHATSAPP_API_URL=http://localhost:3002`
+- `WHATSAPP_TOKEN=<mesmo valor da API WhatsApp>`
+
+A API espera payload no formato:
+
+```json
+{
+  "phone": "244...",
+  "message": "..."
 }
 ```
 
-O serviço `server/services/whatsapp.ts` do Rove+ já usa `WHATSAPP_API_URL` e `WHATSAPP_TOKEN`; basta apontar a URL para esta API (ex: `http://localhost:3001`) e manter o mesmo formato de body (ou adaptar o whatsapp.ts para enviar `phone` e `message` neste formato, se ainda usar outro).
+## Producao (VPS/Docker)
 
-## Rodar em VPS ou Docker
+- Mantem o servico sempre ligado.
+- Usa volume persistente para `WWEBJS_AUTH_PATH`.
+- Configura `WHATSAPP_TOKEN` em producao.
+- Na primeira execucao, faz o scan do QR nos logs/terminal.
 
-- **PaaS long-running (ex: Render/Railway/Fly.io) com disco persistente:**
-  - instalar/usar `docker` ou “Node service” do provider
-  - definir `WWEBJS_AUTH_PATH` para um caminho **persistente** (ex: `./.wwebjs_auth` montado via volume)
-  - garantir que o serviço fica ligado 24h e que o volume persistente não é apagado em cada deploy
-  - na primeira execução, escanear o QR no log do serviço (depois a sessão mantém-se no volume)
-- **Docker:**
-  - subir um container e montar volume no caminho definido em `WWEBJS_AUTH_PATH` (por exemplo `/app/.wwebjs_auth`)
-  - manter o container sempre ligado
+## Fluxo resumido
 
-## Resumo do fluxo
-
-```
-Rove+ Backend  →  HTTP POST /send (phone, message)  →  WhatsApp API  →  whatsapp-web.js  →  WhatsApp Web  →  Cliente recebe a mensagem
+```text
+Rove+ Backend -> POST /send -> WhatsApp API -> whatsapp-web.js -> WhatsApp Web -> cliente recebe
 ```
 
-Todo o código da API está no ficheiro **server.js**.
+---
+
+Arquivo principal da API: `whatsapp-api/server.js`.

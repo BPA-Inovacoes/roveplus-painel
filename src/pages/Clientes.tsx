@@ -21,6 +21,7 @@ import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
 
 interface Client {
   id: number
+  roveId?: string | null
   nome: string
   whatsapp: string
   localizacao: string | null
@@ -122,7 +123,7 @@ export default function Clientes() {
   const [clientSuspender, setClientSuspender] = useState<Client | null>(null)
   const [clientAtivar, setClientAtivar] = useState<Client | null>(null)
   const [clientRenovar, setClientRenovar] = useState<Client | null>(null)
-  const [renovarMeses, setRenovarMeses] = useState(1)
+  const [renovarMeses, setRenovarMeses] = useState<number | ''>('')
   const [editStep, setEditStep] = useState(1)
   const [tablePage, setTablePage] = useState(1)
   const [form, setForm] = useState<
@@ -281,11 +282,15 @@ export default function Clientes() {
 
   async function confirmarRenovar() {
     if (!clientRenovar) return
+    if (renovarMeses === '') {
+      showWarning('Selecione quantos meses estão a ser pagos.')
+      return
+    }
     const meses = Math.min(24, Math.max(1, renovarMeses))
     try {
       await api.post(`/api/clients/${clientRenovar.id}/renovar`, { meses })
       setClientRenovar(null)
-      setRenovarMeses(1)
+      setRenovarMeses('')
       load()
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Erro ao renovar cliente')
@@ -541,6 +546,7 @@ export default function Clientes() {
                   {tab === 'netflix' && <th className="px-4 py-3.5 font-medium">Sala</th>}
                   <th className="px-4 py-3.5 font-medium">Plano</th>
                   {tab === 'iptv' && <th className="px-4 py-3.5 font-medium">Data fim</th>}
+                  {tab === 'netflix' && <th className="px-4 py-3.5 font-medium">Data renovação</th>}
                   <th className="px-4 py-3.5 font-medium">Valor</th>
                   <th className="px-4 py-3.5 font-medium">Estado</th>
                   <th className="px-4 py-3.5 font-medium text-right">Ações</th>
@@ -563,6 +569,9 @@ export default function Clientes() {
                       <td className="px-4 py-3 text-center text-gray-400 text-sm">{rowNum}</td>
                       <td className="px-4 py-3">
                         <div className="font-medium text-white">{c.nome}</div>
+                        <div className="text-xs text-primary-300 mt-0.5">
+                          {c.roveId || 'A gerar ID ROVE...'}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <a
@@ -595,6 +604,18 @@ export default function Clientes() {
                       )}
                       <td className="px-4 py-3 text-sm">{c.plano}</td>
                       {tab === 'iptv' && (
+                        <td className="px-4 py-3">
+                          <span className={`text-sm ${urgent ? 'text-amber-300 font-semibold' : alert ? 'text-amber-400 font-medium' : expired ? 'text-red-400 font-medium' : 'text-gray-300'}`}>
+                            {formatDate(c.dataFim)}
+                            {c.status === 'ativo' && (
+                              <span className="text-gray-500 text-xs ml-1">
+                                ({days > 0 ? `${days}d` : days === 0 ? 'hoje' : 'vencido'})
+                              </span>
+                            )}
+                          </span>
+                        </td>
+                      )}
+                      {tab === 'netflix' && (
                         <td className="px-4 py-3">
                           <span className={`text-sm ${urgent ? 'text-amber-300 font-semibold' : alert ? 'text-amber-400 font-medium' : expired ? 'text-red-400 font-medium' : 'text-gray-300'}`}>
                             {formatDate(c.dataFim)}
@@ -647,7 +668,7 @@ export default function Clientes() {
                               type="button"
                               onClick={() => {
                                 setClientRenovar(c)
-                                setRenovarMeses(1)
+                                setRenovarMeses('')
                               }}
                               title="Renovar (vencimento dia 11)"
                               className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-green-500/50 bg-green-500/10 text-green-300 hover:bg-green-500/30 hover:text-white transition-colors"
@@ -813,9 +834,10 @@ export default function Clientes() {
                 <label className="block text-sm font-medium text-gray-300 mb-2">Meses de pagamento</label>
                 <select
                   value={renovarMeses}
-                  onChange={(e) => setRenovarMeses(Number(e.target.value))}
+                  onChange={(e) => setRenovarMeses(e.target.value === '' ? '' : Number(e.target.value))}
                   className="w-full px-4 py-3 bg-netflix-panel border border-netflix-border rounded-xl text-sm text-white focus:ring-2 focus:ring-green-500/50 focus:border-green-500/50 outline-none transition-colors"
                 >
+                  <option value="">Selecione os meses</option>
                   {Array.from({ length: 24 }, (_, i) => i + 1).map((n) => (
                     <option key={n} value={n}>
                       {n} {n === 1 ? 'mês' : 'meses'}
@@ -827,7 +849,7 @@ export default function Clientes() {
             <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80">
               <button
                 type="button"
-                onClick={() => { setClientRenovar(null); setRenovarMeses(1) }}
+                onClick={() => { setClientRenovar(null); setRenovarMeses('') }}
                 className="flex-1 py-2.5 px-4 border border-netflix-border rounded-xl text-sm font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
               >
                 Cancelar
@@ -835,7 +857,9 @@ export default function Clientes() {
               <button
                 type="button"
                 onClick={confirmarRenovar}
-                className="flex-1 py-2.5 px-4 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 transition-colors shadow-lg shadow-green-900/30"
+                disabled={renovarMeses === ''}
+                title={renovarMeses === '' ? 'Selecione os meses' : 'Confirmar renovação'}
+                className="flex-1 py-2.5 px-4 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 disabled:opacity-50 disabled:hover:bg-green-600 transition-colors shadow-lg shadow-green-900/30"
               >
                 Renovar
               </button>

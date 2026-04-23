@@ -21,12 +21,15 @@ import {
   AlertTriangle,
   Info,
   CheckCircle2,
+  Bot,
+  Globe,
 } from 'lucide-react'
 import { clientPortalApi } from '../api/clientPortal'
 import { useClientPortal } from '../contexts/ClientPortalContext'
 import { useAlert } from '../contexts/AlertContext'
 
 const WA_BUSINESS = '244933623143'
+const ROVE_SITE_URL = 'https://roveplus.com'
 
 export interface ClientPortalMe {
   id: number
@@ -51,6 +54,7 @@ export interface ClientPortalMe {
   inscricaoPaga: boolean | null
   /** Total de indicações registadas (contador no perfil) */
   indicacoes: number
+  portalFirstLogin: boolean
 }
 
 export interface PortalIndicacaoRow {
@@ -158,6 +162,9 @@ export default function ClientArea() {
   const [activeSection, setActiveSection] = useState<string>('cliente-inicio')
   const [portalNotifs, setPortalNotifs] = useState<PortalNotificacaoItem[]>([])
   const [notifsLoading, setNotifsLoading] = useState(false)
+  const [showChangePinModal, setShowChangePinModal] = useState(false)
+  const [changePinForm, setChangePinForm] = useState({ currentPin: '', newPin: '', confirmPin: '' })
+  const [changingPin, setChangingPin] = useState(false)
 
   useEffect(() => {
     if (!client) return
@@ -208,6 +215,13 @@ export default function ClientArea() {
       window.removeEventListener('resize', updateActiveFromScroll)
     }
   }, [me])
+
+  useEffect(() => {
+    if (!me) return
+    if (me.portalFirstLogin) {
+      setShowChangePinModal(true)
+    }
+  }, [me?.id, me?.portalFirstLogin])
 
   async function handleLogout() {
     await logout()
@@ -261,6 +275,45 @@ export default function ClientArea() {
     }
   }
 
+  async function handleChangePortalPin(e: React.FormEvent) {
+    e.preventDefault()
+    const atual = changePinForm.currentPin.trim()
+    const novo = changePinForm.newPin.trim()
+    const conf = changePinForm.confirmPin.trim()
+    if (!atual || !novo || !conf) {
+      showError('Preencha PIN atual, novo PIN e confirmação.')
+      return
+    }
+    if (novo.length < 6) {
+      showError('O novo PIN deve ter pelo menos 6 caracteres.')
+      return
+    }
+    if (novo !== conf) {
+      showError('A confirmação do PIN não coincide.')
+      return
+    }
+    setChangingPin(true)
+    try {
+      await clientPortalApi.post('/api/client-portal/change-pin', {
+        currentPin: atual,
+        newPin: novo,
+      })
+      const [freshMe, freshNotifs] = await Promise.all([
+        clientPortalApi.get<ClientPortalMe>('/api/client-portal/me'),
+        clientPortalApi.get<{ items: PortalNotificacaoItem[] }>('/api/client-portal/notificacoes'),
+      ])
+      setMe(freshMe)
+      setPortalNotifs(freshNotifs.items)
+      setShowChangePinModal(false)
+      setChangePinForm({ currentPin: '', newPin: '', confirmPin: '' })
+      showInfo('PIN alterado com sucesso.')
+    } catch (err) {
+      showError(err instanceof Error ? err.message : 'Não foi possível alterar o PIN.')
+    } finally {
+      setChangingPin(false)
+    }
+  }
+
   const daysLeft = useMemo(() => (me ? daysUntil(me.dataFim) : 0), [me])
 
   const renewalAccent = useMemo(() => {
@@ -310,7 +363,9 @@ export default function ClientArea() {
   }
 
   const st = statusLabel(me.status)
+  const mustChangePinNow = me.portalFirstLogin
   const waDigits = me.whatsapp.replace(/\D/g, '')
+  const waBotText = encodeURIComponent(`Olá Rove+, quero falar com o bot de atendimento.\nCliente: ${me.nome}`)
   const firstName = me.nome.split(/\s+/)[0]
 
   const alertNotifCount = portalNotifs.filter((n) => n.tipo === 'warning' || n.tipo === 'danger').length
@@ -331,11 +386,11 @@ export default function ClientArea() {
   return (
     <div className="min-h-screen bg-netflix-bg text-gray-200 relative overflow-x-hidden">
       <div
-        className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_100%_60%_at_50%_-10%,rgba(229,9,20,0.14),transparent_55%)]"
+        className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_100%_60%_at_50%_-10%,rgba(229,9,20,0.20),transparent_55%)]"
         aria-hidden
       />
       <div
-        className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_50%_40%_at_100%_100%,rgba(139,92,246,0.08),transparent)]"
+        className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_50%_40%_at_100%_100%,rgba(139,92,246,0.14),transparent)]"
         aria-hidden
       />
       <div
@@ -382,7 +437,7 @@ export default function ClientArea() {
                       aria-current={isActive ? 'true' : undefined}
                       className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all duration-200 ${
                         isActive
-                          ? 'border border-primary-500/70 bg-primary-600/30 text-white shadow-[0_0_16px_rgba(229,9,20,0.22)] ring-1 ring-primary-500/40'
+                          ? 'border border-primary-500/70 bg-gradient-to-b from-primary-500/35 to-primary-700/25 text-white shadow-[0_0_16px_rgba(229,9,20,0.28)] ring-1 ring-primary-500/40'
                           : 'border border-white/[0.08] bg-white/[0.04] text-gray-300 hover:bg-white/[0.08] hover:text-white hover:border-white/15'
                       }`}
                     >
@@ -431,6 +486,16 @@ export default function ClientArea() {
                     <MapPin className="w-3.5 h-3.5" />
                     {me.localizacao}
                   </span>
+                )}
+                {me.portalFirstLogin && (
+                  <button
+                    type="button"
+                    onClick={() => setShowChangePinModal(true)}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border border-amber-500/35 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25 transition-colors"
+                  >
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    Alterar PIN (primeiro acesso)
+                  </button>
                 )}
               </div>
             </div>
@@ -789,7 +854,7 @@ export default function ClientArea() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.12 }}
-          className="scroll-mt-36 rounded-2xl border border-emerald-500/15 bg-gradient-to-br from-emerald-950/20 via-netflix-panel/30 to-netflix-card/50 p-6 sm:p-7 shadow-lg shadow-black/20"
+          className="scroll-mt-36 rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-950/30 via-netflix-panel/40 to-netflix-card/60 p-6 sm:p-7 shadow-lg shadow-black/20 ring-1 ring-emerald-500/10"
         >
           <div className="flex items-center gap-3 mb-4">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/15 border border-emerald-500/25">
@@ -814,6 +879,26 @@ export default function ClientArea() {
               WhatsApp Rove+
               <ExternalLink className="w-3.5 h-3.5 opacity-80" />
             </a>
+            <a
+              href={`https://wa.me/${WA_BUSINESS}?text=${waBotText}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-b from-sky-600 to-sky-700 hover:from-sky-500 hover:to-sky-600 text-white text-sm font-semibold shadow-lg shadow-sky-950/40 border border-sky-500/20 transition-colors"
+            >
+              <Bot className="w-4 h-4" />
+              Bot de atendimento
+              <ExternalLink className="w-3.5 h-3.5 opacity-80" />
+            </a>
+            <a
+              href={ROVE_SITE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-5 py-3 rounded-xl border border-primary-500/40 bg-primary-500/10 text-primary-200 hover:bg-primary-500/20 text-sm font-semibold transition-colors"
+            >
+              <Globe className="w-4 h-4" />
+              Site da Rove+
+              <ExternalLink className="w-3.5 h-3.5 opacity-80" />
+            </a>
             {waDigits && (
               <a
                 href={`https://wa.me/${waDigits}`}
@@ -827,10 +912,92 @@ export default function ClientArea() {
           </div>
         </motion.section>
 
+        <a
+          href={`https://wa.me/${WA_BUSINESS}?text=${waBotText}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="fixed bottom-5 right-4 sm:right-6 z-40 inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white text-sm font-semibold shadow-lg shadow-emerald-950/50 border border-emerald-300/20 hover:from-emerald-400 hover:to-green-500 transition-colors"
+        >
+          <Bot className="w-4 h-4" />
+          Atendimento
+        </a>
+
         <p className="text-center text-xs text-gray-600 max-w-md mx-auto leading-relaxed px-2">
           Os dados refletem o registo na Rove+. Em caso de divergência, contacte o suporte.
         </p>
       </main>
+
+      {(showChangePinModal || mustChangePinNow) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-netflix-card rounded-2xl shadow-2xl border border-amber-500/40 max-w-sm w-full overflow-hidden">
+            <div className="p-6 border-b border-netflix-border/80">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 ring-1 ring-amber-500/30">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold text-white">Alterar PIN da área cliente</h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Primeiro acesso: recomenda-se alterar o PIN</p>
+                </div>
+              </div>
+            </div>
+            <form onSubmit={handleChangePortalPin}>
+              <div className="p-6 space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">PIN atual</label>
+                  <input
+                    type="password"
+                    value={changePinForm.currentPin}
+                    onChange={(e) => setChangePinForm((f) => ({ ...f, currentPin: e.target.value }))}
+                    className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-xl text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                    placeholder="PIN usado no login"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">Novo PIN</label>
+                  <input
+                    type="password"
+                    value={changePinForm.newPin}
+                    onChange={(e) => setChangePinForm((f) => ({ ...f, newPin: e.target.value }))}
+                    className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-xl text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                    placeholder="Mínimo 6 caracteres"
+                    minLength={6}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">Confirmar novo PIN</label>
+                  <input
+                    type="password"
+                    value={changePinForm.confirmPin}
+                    onChange={(e) => setChangePinForm((f) => ({ ...f, confirmPin: e.target.value }))}
+                    className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-xl text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                    placeholder="Repita o novo PIN"
+                    minLength={6}
+                  />
+                </div>
+              </div>
+              <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80 bg-netflix-panel/30">
+                {!mustChangePinNow && (
+                  <button
+                    type="button"
+                    onClick={() => setShowChangePinModal(false)}
+                    className="flex-1 py-2.5 px-4 border border-netflix-border rounded-xl text-sm font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
+                  >
+                    Fechar
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  disabled={changingPin}
+                  className={`${mustChangePinNow ? 'w-full' : 'flex-1'} py-2.5 px-4 bg-primary-600 text-white rounded-xl text-sm font-medium hover:bg-primary-700 disabled:opacity-50 transition-colors shadow-lg shadow-primary-900/30`}
+                >
+                  {changingPin ? 'A guardar…' : 'Alterar PIN'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

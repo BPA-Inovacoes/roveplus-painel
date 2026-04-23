@@ -31,11 +31,21 @@ router.post('/', auditLog('create_revendedor', 'revendedor'), async (req, res) =
   if (!canAccessServidores(user.role)) return res.status(403).json({ error: 'Sem acesso a revendedores' })
   const { nome, contacto, servidorId, observacoes } = req.body
   if (!nome || !contacto) return res.status(400).json({ error: 'Nome e contacto obrigatórios' })
+  const servidorIdNum = servidorId ? Number(servidorId) : null
+  if (!servidorIdNum) return res.status(400).json({ error: 'Servidor principal é obrigatório.' })
+  const servidor = await prisma.servidor.findUnique({
+    where: { id: servidorIdNum },
+    select: { id: true, tipo: true },
+  })
+  if (!servidor) return res.status(404).json({ error: 'Servidor não encontrado' })
+  if (servidor.tipo !== 'principal') {
+    return res.status(400).json({ error: 'Revendedor só pode ser associado a servidor principal.' })
+  }
   const revendedor = await prisma.revendedor.create({
     data: {
       nome: String(nome),
       contacto: String(contacto),
-      servidorId: servidorId ? Number(servidorId) : null,
+      servidorId: servidorIdNum,
       observacoes: observacoes ? String(observacoes) : null,
       status: 'ativo',
     },
@@ -95,7 +105,18 @@ router.patch('/:id', auditLog('update_revendedor', 'revendedor'), async (req, re
   const update: Record<string, unknown> = {}
   if (nome != null) update.nome = nome
   if (contacto != null) update.contacto = contacto
-  if (servidorId !== undefined) update.servidorId = servidorId ? Number(servidorId) : null
+  const nextServidorRaw = servidorId !== undefined ? servidorId : existing.servidorId
+  const servidorIdNum = nextServidorRaw ? Number(nextServidorRaw) : null
+  if (!servidorIdNum) return res.status(400).json({ error: 'Servidor principal é obrigatório.' })
+  const servidor = await prisma.servidor.findUnique({
+    where: { id: servidorIdNum },
+    select: { id: true, tipo: true },
+  })
+  if (!servidor) return res.status(404).json({ error: 'Servidor não encontrado' })
+  if (servidor.tipo !== 'principal') {
+    return res.status(400).json({ error: 'Revendedor só pode ser associado a servidor principal.' })
+  }
+  update.servidorId = servidorIdNum
   if (observacoes !== undefined) update.observacoes = observacoes ? String(observacoes) : null
   if (status != null) update.status = status
   const revendedor = await prisma.revendedor.update({
