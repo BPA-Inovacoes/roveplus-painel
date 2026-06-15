@@ -81,7 +81,7 @@ export async function loadEntitySnapshot(
       case 'revendedor': {
         const r = await prisma.revendedor.findUnique({
           where: { id: entityId },
-          select: { nome: true, whatsapp: true },
+          select: { nome: true, contacto: true },
         })
         return r as Jsonish | null
       }
@@ -305,14 +305,14 @@ export async function buildAuditDetails(
     case 'create_revendedor':
       return joinParts([
         res?.nome ? `Revendedor "${res.nome}"` : body.nome ? `Revendedor "${body.nome}"` : 'Novo revendedor',
-        body.whatsapp ? String(body.whatsapp) : null,
+        body.contacto ? String(body.contacto) : null,
       ])
 
     case 'update_revendedor': {
       const nome = String(res?.nome ?? before?.nome ?? 'Revendedor')
       const parts: string[] = []
       if (body.nome && before?.nome) parts.push(`nome: ${before.nome} → ${body.nome}`)
-      if (body.whatsapp) parts.push(`WhatsApp: ${body.whatsapp}`)
+      if (body.contacto) parts.push(`Contacto: ${body.contacto}`)
       return parts.length ? `"${nome}" — ${parts.join('; ')}` : `"${nome}" atualizado`
     }
 
