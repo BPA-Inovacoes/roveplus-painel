@@ -2,13 +2,21 @@ import { Router, type Request } from 'express'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { prisma } from '../lib/prisma.js'
-import { normalizeClientWhatsappKey, sendWhatsAppMessage } from '../services/whatsapp.js'
+import { normalizeClientWhatsappKey, sendWhatsAppMessage, formatClientMessage } from '../services/whatsapp.js'
+import { notifyIndicacaoCreated } from '../lib/whatsappNotify.js'
 import { clientPortalMiddleware, type ClientPortalJwtPayload } from '../middleware/clientPortalAuth.js'
 import { setPortalPinPlainInDb } from '../lib/portalPinPlain.js'
 import {
   clientPortalAuthRateLimit,
   clientPortalRecoverRateLimit,
+  clientPortalAssistantRateLimit,
 } from '../middleware/rateLimits.js'
+import { ensureClientRoveId } from '../lib/roveId.js'
+import {
+  getAssistantWelcome,
+  getAssistantReply,
+  type ClientAssistantContext,
+} from '../lib/clientAssistant.js'
 
 const router = Router()
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-production'
@@ -97,12 +105,14 @@ router.post('/recover-pin', clientPortalRecoverRateLimit, async (req, res) => {
     }
 
     const tempPin = generateTemporaryPortalPin()
-    const msg = [
-      `Olá ${client.nome}!`,
-      'Recebemos um pedido de recuperação do PIN da sua área cliente Rove+.',
-      `PIN temporário: ${tempPin}`,
-      'Por segurança, entre e altere o PIN no primeiro acesso (mín. 6 caracteres).',
-    ].join('\n')
+    const msg = formatClientMessage(
+      [
+        `Olá ${client.nome}!`,
+        'Recebemos um pedido de recuperação do PIN da sua área cliente Rove+.',
+        `PIN temporário: ${tempPin}`,
+        'Por segurança, entre e altere o PIN no primeiro acesso (mín. 6 caracteres).',
+      ].join('\n')
+    )
     const sent = await sendWhatsAppMessage(client.whatsapp, msg).catch(() => false)
     if (!sent) {
       return res.status(503).json({
@@ -150,6 +160,7 @@ router.get('/me', clientPortalMiddleware, async (req, res) => {
     include: { sala: { select: { id: true, nome: true, dataFim: true } }, servidor: { select: { id: true, nome: true, status: true } }, revendedor: { select: { nome: true } } },
   })
   if (!client) return res.status(401).json({ error: 'Sessão inválida' })
+  const roveId = await ensureClientRoveId(clientId).catch(() => null)
   const portalFlag = await prisma
     .$queryRawUnsafe<Array<{ portal_first_login: boolean }>>(
       'SELECT portal_first_login FROM clients WHERE id = $1',
@@ -175,7 +186,10 @@ router.get('/me', clientPortalMiddleware, async (req, res) => {
     revendedor: client.revendedor,
     iptvUser: client.iptvUser,
     iptvPassSet: !!(client.iptvPass && String(client.iptvPass).length > 0),
+    iptvPass:
+      client.iptvPass && String(client.iptvPass).length > 0 ? String(client.iptvPass) : null,
     iptvMac: client.iptvMac,
+    roveId,
     iptvM3u: client.iptvM3u,
     inscricaoPaga: client.inscricaoPaga,
     indicacoes: client.indicacoes,
@@ -409,7 +423,80 @@ router.post('/indicacoes', clientPortalMiddleware, async (req, res) => {
     where: { id: clientId },
     data: { indicacoes: { increment: 1 } },
   })
+  void notifyIndicacaoCreated(clientId, nome, waRaw)
   res.status(201).json(indicacao)
+})
+
+async function loadAssistantContext(clientId: number): Promise<ClientAssistantContext | null> {
+  await ensurePortalFirstLoginColumn().catch(() => {})
+  const client = await prisma.client.findUnique({
+    where: { id: clientId },
+    select: {
+      nome: true,
+      whatsapp: true,
+      servico: true,
+      plano: true,
+      status: true,
+      dataFim: true,
+      valor: true,
+      perfil: true,
+      pin: true,
+      iptvUser: true,
+      iptvPass: true,
+      iptvMac: true,
+      iptvM3u: true,
+      inscricaoPaga: true,
+      indicacoes: true,
+    },
+  })
+  if (!client) return null
+  const portalFirstLogin = await prisma
+    .$queryRawUnsafe<Array<{ portal_first_login: boolean }>>(
+      'SELECT portal_first_login FROM clients WHERE id = $1',
+      clientId
+    )
+    .then((rows) => rows[0]?.portal_first_login ?? false)
+    .catch(() => false)
+  const roveId = await ensureClientRoveId(clientId).catch(() => null)
+  return {
+    nome: client.nome,
+    whatsapp: client.whatsapp,
+    servico: client.servico,
+    plano: client.plano,
+    status: client.status,
+    dataFim: client.dataFim,
+    valor: Number(client.valor),
+    perfil: client.perfil,
+    pin: client.pin,
+    iptvUser: client.iptvUser,
+    iptvPass: client.iptvPass && String(client.iptvPass).length > 0 ? String(client.iptvPass) : null,
+    iptvMac: client.iptvMac,
+    iptvM3u: client.iptvM3u,
+    inscricaoPaga: client.inscricaoPaga,
+    indicacoes: client.indicacoes,
+    portalFirstLogin,
+    roveId,
+    diasRestantes: diasAteDataFim(client.dataFim),
+  }
+}
+
+router.get('/assistente/saudacao', clientPortalMiddleware, async (req, res) => {
+  const { clientId } = (req as ClientPortalReq).clientPortal
+  const ctx = await loadAssistantContext(clientId)
+  if (!ctx) return res.status(401).json({ error: 'Sessão inválida' })
+  res.json(getAssistantWelcome(ctx))
+})
+
+router.post('/assistente', clientPortalMiddleware, clientPortalAssistantRateLimit, async (req, res) => {
+  const { clientId } = (req as ClientPortalReq).clientPortal
+  const { message } = req.body as { message?: string }
+  const text = String(message ?? '').trim()
+  if (text.length > 500) {
+    return res.status(400).json({ error: 'Mensagem demasiado longa (máx. 500 caracteres).' })
+  }
+  const ctx = await loadAssistantContext(clientId)
+  if (!ctx) return res.status(401).json({ error: 'Sessão inválida' })
+  res.json(getAssistantReply(ctx, text))
 })
 
 export default router

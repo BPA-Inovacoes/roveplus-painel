@@ -12,6 +12,7 @@ const ROLE_LABELS: Record<string, string> = {
   netflix: 'Operador Netflix',
   iptv: 'Operador IPTV',
   suporte: 'Suporte',
+  financeiro: 'Financeiro',
 }
 
 const ROLE_PILL: Record<string, string> = {
@@ -20,6 +21,7 @@ const ROLE_PILL: Record<string, string> = {
   netflix: 'bg-red-500/20 text-red-200 border-red-400/35',
   iptv: 'bg-violet-500/20 text-violet-200 border-violet-400/35',
   suporte: 'bg-emerald-500/15 text-emerald-200 border-emerald-400/35',
+  financeiro: 'bg-lime-500/15 text-lime-200 border-lime-400/35',
 }
 
 type MeResponse = {
@@ -51,9 +53,8 @@ const sectionMotion = {
 }
 
 export default function MeuPerfil() {
-  const { user, refetch } = useAuth()
+  const { user, loading: authLoading, refetch } = useAuth()
   const { showError, showInfo } = useAlert()
-  const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [nome, setNome] = useState('')
   const [email, setEmail] = useState('')
@@ -63,24 +64,11 @@ export default function MeuPerfil() {
   const [confirmPassword, setConfirmPassword] = useState('')
 
   useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    api
-      .get<MeResponse>('/api/auth/me')
-      .then((me) => {
-        if (cancelled) return
-        setNome(me.nome)
-        setEmail(me.email)
-        setWhatsapp(me.whatsapp ?? '')
-      })
-      .catch((e) => showError(e instanceof Error ? e.message : 'Erro ao carregar perfil'))
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [showError])
+    if (!user) return
+    setNome(user.nome)
+    setEmail(user.email)
+    setWhatsapp(user.whatsapp ?? '')
+  }, [user])
 
   const role = user?.role ?? ''
   const roleLabel = role ? ROLE_LABELS[role] || role : ''
@@ -89,9 +77,20 @@ export default function MeuPerfil() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!nome.trim() || !email.trim()) {
-      showError('Nome e email são obrigatórios.')
+    if (!nome.trim() || nome.trim().length < 2) {
+      showError('Nome deve ter pelo menos 2 caracteres.')
       return
+    }
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      showError('Indique um email válido.')
+      return
+    }
+    if (whatsapp.trim()) {
+      const digits = whatsapp.replace(/\D/g, '')
+      if (digits.length < 8) {
+        showError('WhatsApp inválido (mínimo 8 dígitos).')
+        return
+      }
     }
     if (newPassword || confirmPassword || currentPassword) {
       if (!currentPassword) {
@@ -133,7 +132,7 @@ export default function MeuPerfil() {
     }
   }
 
-  if (loading) {
+  if (authLoading || !user) {
     return (
       <div className="flex items-center justify-center min-h-[320px]">
         <div className="flex flex-col items-center gap-3 text-gray-400">

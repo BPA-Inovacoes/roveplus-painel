@@ -1,9 +1,28 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { RoveModalOverlay } from '../components/RoveModalOverlay'
 import { motion } from 'framer-motion'
-import { Plus, Gift, User, Check, Edit2, Trash2, RotateCcw } from 'lucide-react'
+import { Plus, Gift, Check, Edit2, Trash2, RotateCcw, Search, RefreshCw } from 'lucide-react'
+import { RoveSelect } from '../components/RoveSelect'
+import { WhatsappAoInput } from '../components/WhatsappAoInput'
+import { RoveWhatsappLink } from '../components/RoveWhatsappLink'
+import {
+  ROVE_FORM_INPUT_SM,
+  ROVE_FORM_LOCKED_SM,
+  RoveFormLabel,
+  RoveLockedBadge,
+} from '../components/roveFormUi'
+import { emptyWhatsapp, formatWhatsapp, isWhatsappValid, nationalDigitsFromWhatsapp } from '../utils/whatsapp'
 import { api } from '../api/client'
 import { useAlert } from '../contexts/AlertContext'
 import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
+
+const emptyForm = () => ({
+  id: 0,
+  indicadorRoveId: '',
+  indicadoNome: '',
+  indicadoWhatsapp: emptyWhatsapp(),
+  status: 'pendente',
+})
 
 interface Indicacao {
   id: number
@@ -26,10 +45,14 @@ export default function Indicacoes() {
   const [list, setList] = useState<Indicacao[]>([])
   const [clients, setClients] = useState<Client[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState('')
+  const [filter, setFilter] = useState({ status: '' })
+  const [search, setSearch] = useState('')
+  const [searchDebounced, setSearchDebounced] = useState('')
   const [modal, setModal] = useState<'new' | 'edit' | null>(null)
   const [indicacaoToDelete, setIndicacaoToDelete] = useState<Indicacao | null>(null)
-  const [form, setForm] = useState({ id: 0, indicadorRoveId: '', indicadoNome: '', indicadoWhatsapp: '', status: 'pendente' })
+  const [indicacaoToConfirmar, setIndicacaoToConfirmar] = useState<Indicacao | null>(null)
+  const [indicacaoToReverter, setIndicacaoToReverter] = useState<Indicacao | null>(null)
+  const [form, setForm] = useState(emptyForm)
   const [tablePage, setTablePage] = useState(1)
 
   function load() {
@@ -49,10 +72,33 @@ export default function Indicacoes() {
     api.get<Client[]>('/api/clients').then((c) => setClients(c)).catch(() => setClients([]))
   }, [])
 
-  const filtered =
-    filter === ''
-      ? list
-      : list.filter((i) => i.status === filter)
+  useEffect(() => {
+    const t = window.setTimeout(() => setSearchDebounced(search), 300)
+    return () => window.clearTimeout(t)
+  }, [search])
+
+  useEffect(() => {
+    setTablePage(1)
+  }, [filter, searchDebounced])
+
+  const filtered = useMemo(() => {
+    const q = searchDebounced.trim().toLowerCase()
+    return list.filter((i) => {
+      if (filter.status && i.status !== filter.status) return false
+      if (!q) return true
+      const hay = [
+        i.indicadoNome,
+        i.indicadoWhatsapp,
+        i.indicador.nome,
+        i.indicador.roveId,
+        i.indicador.whatsapp,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+      return hay.includes(q)
+    })
+  }, [list, filter, searchDebounced])
 
   const totalTablePages = Math.max(1, Math.ceil(filtered.length / ROWS_PER_PAGE))
   const tablePageClamped = Math.min(tablePage, totalTablePages)
@@ -68,6 +114,7 @@ export default function Indicacoes() {
     const nome = (form.indicadoNome ?? '').trim()
     const whatsapp = (form.indicadoWhatsapp ?? '').trim()
     const isEdit = !!form.id
+    const whatsappPreenchido = nationalDigitsFromWhatsapp(whatsapp).length > 0
     if (!isEdit && !form.indicadorRoveId) {
       showWarning('Selecione o cliente que indicou.')
       return
@@ -76,34 +123,51 @@ export default function Indicacoes() {
       showWarning('Nome do indicado é obrigatório.')
       return
     }
+    if (whatsappPreenchido && !isWhatsappValid(whatsapp)) {
+      showWarning('WhatsApp inválido (+244, +351 ou +55 com número completo).')
+      return
+    }
     try {
       if (isEdit) {
         await api.patch(`/api/indicacoes/${form.id}`, {
           indicadoNome: nome,
-          indicadoWhatsapp: whatsapp,
+          indicadoWhatsapp: whatsappPreenchido ? whatsapp : '',
           status: form.status || 'pendente',
         })
       } else {
         await api.post('/api/indicacoes', {
           indicadorRoveId: form.indicadorRoveId,
           indicadoNome: nome,
-          indicadoWhatsapp: whatsapp || undefined,
+          indicadoWhatsapp: whatsappPreenchido ? whatsapp : undefined,
         })
       }
       setModal(null)
-      setForm({ id: 0, indicadorRoveId: '', indicadoNome: '', indicadoWhatsapp: '', status: 'pendente' })
+      setForm(emptyForm())
       load()
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Erro ao guardar')
     }
   }
 
-  async function updateStatus(id: number, status: string) {
+  async function confirmarAprovar() {
+    if (!indicacaoToConfirmar) return
     try {
-      await api.patch(`/api/indicacoes/${id}`, { status })
+      await api.patch(`/api/indicacoes/${indicacaoToConfirmar.id}`, { status: 'confirmada' })
+      setIndicacaoToConfirmar(null)
       load()
     } catch (e) {
-      showError(e instanceof Error ? e.message : 'Erro')
+      showError(e instanceof Error ? e.message : 'Erro ao confirmar indicação')
+    }
+  }
+
+  async function confirmarReverter() {
+    if (!indicacaoToReverter) return
+    try {
+      await api.patch(`/api/indicacoes/${indicacaoToReverter.id}`, { status: 'pendente' })
+      setIndicacaoToReverter(null)
+      load()
+    } catch (e) {
+      showError(e instanceof Error ? e.message : 'Erro ao reverter indicação')
     }
   }
 
@@ -146,7 +210,7 @@ export default function Indicacoes() {
           <button
             type="button"
             onClick={() => {
-              setForm({ id: 0, indicadorRoveId: '', indicadoNome: '', indicadoWhatsapp: '', status: 'pendente' })
+              setForm(emptyForm())
               setModal('new')
             }}
             className="flex items-center gap-2 py-2.5 px-5 bg-primary-600 text-white rounded-xl hover:bg-primary-700 text-sm font-medium shadow-lg shadow-primary-900/30 transition-colors shrink-0"
@@ -157,17 +221,39 @@ export default function Indicacoes() {
         </div>
       </div>
 
-      {/* Filtro de estado */}
+      {/* Barra de filtros */}
       <div className="flex flex-wrap items-center gap-2 p-4 rounded-xl bg-netflix-card/60 border border-netflix-border/80">
-        <select
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="rounded-lg border border-netflix-border bg-netflix-panel text-white text-sm py-2 px-3 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+        <div className="w-44 min-w-[11rem]">
+          <RoveSelect
+            compact
+            value={filter.status}
+            onChange={(e) => setFilter((f) => ({ ...f, status: e.target.value }))}
+            placeholder="Todos os estados"
+            title="Filtrar por estado"
+          >
+            <option value="">Todos os estados</option>
+            <option value="pendente">Pendentes</option>
+            <option value="confirmada">Confirmadas</option>
+          </RoveSelect>
+        </div>
+        <div className="relative flex-1 min-w-[180px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+          <input
+            type="text"
+            placeholder="Indicado, indicador, WhatsApp, ID ROVE..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full min-h-[32px] pl-10 pr-3 py-1.5 rounded-lg border border-netflix-border bg-netflix-panel text-white placeholder-gray-500 text-xs focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500/50 outline-none transition-colors"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => load()}
+          className="p-2 rounded-lg border border-netflix-border bg-netflix-panel hover:bg-netflix-hover text-gray-300 hover:text-white transition-colors"
+          title="Atualizar lista"
         >
-          <option value="">Todos os estados</option>
-          <option value="pendente">Pendentes</option>
-          <option value="confirmada">Confirmadas</option>
-        </select>
+          <RefreshCw className="w-4 h-4" />
+        </button>
       </div>
 
       {/* Tabela */}
@@ -199,11 +285,13 @@ export default function Indicacoes() {
                     <td className="px-4 py-3">
                       <span className="font-medium text-white">{i.indicadoNome}</span>
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-400">{i.indicadoWhatsapp}</td>
+                    <td className="px-4 py-3">
+                      <RoveWhatsappLink value={i.indicadoWhatsapp} />
+                    </td>
                     <td className="px-4 py-3">
                       <span className="text-gray-200 text-sm">{i.indicador.nome}</span>
                       <span className="text-primary-300 text-xs block">{i.indicador.roveId || 'Sem ID ROVE'}</span>
-                      <span className="text-gray-500 text-xs block">{i.indicador.whatsapp}</span>
+                      <RoveWhatsappLink value={i.indicador.whatsapp} compact hideWhenEmpty className="mt-0.5" />
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-400">
                       {new Date(i.createdAt).toLocaleDateString('pt-BR')}
@@ -224,7 +312,7 @@ export default function Indicacoes() {
                         {i.status === 'pendente' && (
                           <button
                             type="button"
-                            onClick={() => updateStatus(i.id, 'confirmada')}
+                            onClick={() => setIndicacaoToConfirmar(i)}
                             title="Confirmar indicação"
                             className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-primary-500/60 bg-primary-500/10 text-primary-300 hover:bg-primary-500/30 hover:text-white shadow-sm shadow-primary-900/40 transition-colors text-xs font-medium"
                           >
@@ -234,7 +322,7 @@ export default function Indicacoes() {
                         {i.status === 'confirmada' && (
                           <button
                             type="button"
-                            onClick={() => updateStatus(i.id, 'pendente')}
+                            onClick={() => setIndicacaoToReverter(i)}
                             title="Reverter para pendente"
                             className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-amber-500/50 bg-amber-500/10 text-amber-300 hover:bg-amber-500/30 hover:text-white shadow-sm shadow-amber-900/40 transition-colors"
                           >
@@ -248,7 +336,9 @@ export default function Indicacoes() {
                               id: i.id,
                               indicadorRoveId: i.indicador.roveId ?? '',
                               indicadoNome: i.indicadoNome,
-                              indicadoWhatsapp: i.indicadoWhatsapp,
+                              indicadoWhatsapp: i.indicadoWhatsapp
+                                ? formatWhatsapp(i.indicadoWhatsapp)
+                                : emptyWhatsapp(),
                               status: i.status,
                             })
                             setModal('edit')
@@ -284,9 +374,103 @@ export default function Indicacoes() {
         )}
       </div>
 
+      {/* Modal confirmar aprovar indicação */}
+      {indicacaoToConfirmar && (
+        <RoveModalOverlay>
+          <div className="bg-netflix-card rounded-2xl shadow-2xl border border-green-500/40 max-w-sm w-full overflow-hidden">
+            <div className="p-6 border-b border-netflix-border/80">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-green-500/20 text-green-400 ring-1 ring-green-500/30">
+                  <Check className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold text-white">Confirmar indicação</h3>
+                  <div className="h-1 w-12 bg-green-500 rounded-full mt-2" />
+                </div>
+              </div>
+            </div>
+            <div className="p-6 space-y-2">
+              <p className="text-sm text-gray-300">
+                Tem a certeza que deseja confirmar a indicação de{' '}
+                <span className="font-medium text-white">{indicacaoToConfirmar.indicadoNome}</span>?
+              </p>
+              <p className="text-xs text-gray-500">
+                Indicado por <span className="text-gray-400">{indicacaoToConfirmar.indicador.nome}</span>
+                {indicacaoToConfirmar.indicador.roveId ? (
+                  <span className="text-primary-300"> · {indicacaoToConfirmar.indicador.roveId}</span>
+                ) : null}
+                . O estado passará a <span className="text-green-400 font-medium">confirmada</span>.
+              </p>
+            </div>
+            <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80">
+              <button
+                type="button"
+                onClick={() => setIndicacaoToConfirmar(null)}
+                className="flex-1 py-2.5 px-4 border border-netflix-border rounded-xl text-sm font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmarAprovar}
+                className="flex-1 py-2.5 px-4 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 transition-colors shadow-lg shadow-green-900/30"
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </RoveModalOverlay>
+      )}
+
+      {/* Modal confirmar reverter para pendente */}
+      {indicacaoToReverter && (
+        <RoveModalOverlay>
+          <div className="bg-netflix-card rounded-2xl shadow-2xl border border-amber-500/40 max-w-sm w-full overflow-hidden">
+            <div className="p-6 border-b border-netflix-border/80">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 ring-1 ring-amber-500/30">
+                  <RotateCcw className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold text-white">Reverter para pendente</h3>
+                  <div className="h-1 w-12 bg-amber-500 rounded-full mt-2" />
+                </div>
+              </div>
+            </div>
+            <div className="p-6 space-y-2">
+              <p className="text-sm text-gray-300">
+                Tem a certeza que deseja reverter a indicação de{' '}
+                <span className="font-medium text-white">{indicacaoToReverter.indicadoNome}</span> para pendente?
+              </p>
+              <p className="text-xs text-gray-500">
+                O estado passará de <span className="text-green-400 font-medium">confirmada</span> para{' '}
+                <span className="text-amber-400 font-medium">pendente</span>. O contador de indicações do cliente
+                indicador será atualizado.
+              </p>
+            </div>
+            <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80">
+              <button
+                type="button"
+                onClick={() => setIndicacaoToReverter(null)}
+                className="flex-1 py-2.5 px-4 border border-netflix-border rounded-xl text-sm font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmarReverter}
+                className="flex-1 py-2.5 px-4 bg-amber-600 text-white rounded-xl text-sm font-medium hover:bg-amber-700 transition-colors shadow-lg shadow-amber-900/30"
+              >
+                Reverter
+              </button>
+            </div>
+          </div>
+        </RoveModalOverlay>
+      )}
+
       {/* Modal confirmar excluir indicação */}
       {indicacaoToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <RoveModalOverlay>
           <div className="bg-netflix-card rounded-2xl shadow-2xl border border-red-500/40 max-w-sm w-full overflow-hidden">
             <div className="p-6 border-b border-netflix-border/80">
               <div className="flex items-center gap-3">
@@ -322,101 +506,134 @@ export default function Indicacoes() {
               </button>
             </div>
           </div>
-        </div>
+        </RoveModalOverlay>
       )}
 
       {/* Modal nova / editar indicação */}
       {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-netflix-card rounded-2xl shadow-2xl border border-netflix-border max-w-md w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-netflix-border/80 flex items-center gap-2">
-              <User className="w-5 h-5 text-primary-400" />
-              <div>
-                <h3 className="text-xl font-semibold text-white">
-                  {modal === 'edit' ? 'Editar indicação' : 'Nova indicação'}
-                </h3>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  {modal === 'edit' ? 'Altere os dados do indicado ou o estado.' : 'Registe um novo cliente indicado.'}
-                </p>
-              </div>
-            </div>
-            <div className="p-6 space-y-4">
-              {modal === 'edit' ? (
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-0.5">Quem indicou (cliente)</label>
-                  <p className="px-3 py-2 bg-netflix-panel/50 border border-netflix-border rounded-lg text-sm text-gray-300">
-                    {clients.find((c) => c.roveId === form.indicadorRoveId)?.nome ?? '—'}
+        <RoveModalOverlay>
+          <div className="bg-netflix-card rounded-xl shadow-2xl border border-netflix-border max-w-lg w-full">
+            <div className="border-b border-netflix-border/80 shrink-0 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-lg font-semibold text-white">
+                    {modal === 'edit' ? 'Editar indicação' : 'Nova indicação'}
+                  </h3>
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    {modal === 'edit'
+                      ? 'Altere os dados do indicado ou o estado.'
+                      : 'Registe um novo cliente indicado.'}
                   </p>
+                  <div className="h-0.5 w-10 bg-primary-500 rounded-full mt-2" />
                 </div>
-              ) : (
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-0.5">Quem indicou (ID ROVE)</label>
-                  <select
-                    value={form.indicadorRoveId}
-                    onChange={(e) => setForm((f) => ({ ...f, indicadorRoveId: e.target.value }))}
-                    className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
-                  >
-                    <option value="">Selecione o cliente pelo ID ROVE</option>
-                    {clients.map((c) => (
-                      <option key={c.id} value={c.roveId ?? ''} disabled={!c.roveId}>
-                        {c.roveId ? `${c.roveId} - ${c.nome}` : `${c.nome} (sem ID ROVE)`}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-0.5">Nome do indicado</label>
-                <input
-                  type="text"
-                  value={form.indicadoNome}
-                  onChange={(e) => setForm((f) => ({ ...f, indicadoNome: e.target.value }))}
-                  className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
-                  placeholder="Nome da pessoa indicada"
-                />
+                {modal === 'edit' && (
+                  <div className="w-32 shrink-0 sm:w-36">
+                    <RoveFormLabel required>Estado</RoveFormLabel>
+                    <RoveSelect
+                      compact
+                      required
+                      value={form.status || 'pendente'}
+                      onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
+                    >
+                      <option value="pendente">Pendente</option>
+                      <option value="confirmada">Confirmada</option>
+                    </RoveSelect>
+                  </div>
+                )}
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-0.5">WhatsApp do indicado</label>
-                <input
-                  type="text"
-                  value={form.indicadoWhatsapp}
-                  onChange={(e) => setForm((f) => ({ ...f, indicadoWhatsapp: e.target.value }))}
-                  className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
-                  placeholder="244 9XX XXX XXX"
-                />
-              </div>
-              {modal === 'edit' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-0.5">Estado</label>
-                  <select
-                    value={form.status || 'pendente'}
-                    onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
-                    className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
-                  >
-                    <option value="pendente">Pendente</option>
-                    <option value="confirmada">Confirmada</option>
-                  </select>
-                </div>
-              )}
             </div>
-            <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80">
+
+            <div className="p-4 space-y-3">
+              <p className="text-[10px] text-gray-500 pb-0.5">
+                Campos com <span className="text-primary-400">*</span> são obrigatórios.
+              </p>
+
+              <div className="border-t border-netflix-border/60 pt-3">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500 mb-2.5">
+                  Quem indicou
+                </p>
+                {modal === 'edit' ? (
+                  <div>
+                    <RoveFormLabel>Cliente (ID ROVE)</RoveFormLabel>
+                    <div className={ROVE_FORM_LOCKED_SM}>
+                      <span className="min-w-0 truncate font-medium">
+                        {clients.find((c) => c.roveId === form.indicadorRoveId)?.nome ?? '—'}
+                        {form.indicadorRoveId ? (
+                          <span className="text-primary-300"> · {form.indicadorRoveId}</span>
+                        ) : null}
+                      </span>
+                      <RoveLockedBadge label="Fixo" />
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <RoveFormLabel required>Cliente (ID ROVE)</RoveFormLabel>
+                    <RoveSelect
+                      compact
+                      required
+                      value={form.indicadorRoveId}
+                      onChange={(e) => setForm((f) => ({ ...f, indicadorRoveId: e.target.value }))}
+                    >
+                      <option value="">Selecione o cliente pelo ID ROVE</option>
+                      {clients.map((c) => (
+                        <option key={c.id} value={c.roveId ?? ''} disabled={!c.roveId}>
+                          {c.roveId ? `${c.roveId} - ${c.nome}` : `${c.nome} (sem ID ROVE)`}
+                        </option>
+                      ))}
+                    </RoveSelect>
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t border-netflix-border/60 pt-3">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500 mb-2.5">
+                  Dados do indicado
+                </p>
+                <div className="space-y-3">
+                  <div>
+                    <RoveFormLabel required>Nome</RoveFormLabel>
+                    <input
+                      type="text"
+                      required
+                      value={form.indicadoNome}
+                      onChange={(e) => setForm((f) => ({ ...f, indicadoNome: e.target.value }))}
+                      className={ROVE_FORM_INPUT_SM}
+                      placeholder="Nome da pessoa indicada"
+                    />
+                  </div>
+                  <div>
+                    <RoveFormLabel>WhatsApp</RoveFormLabel>
+                    <WhatsappAoInput
+                      compact
+                      value={form.indicadoWhatsapp}
+                      onChange={(indicadoWhatsapp) => setForm((f) => ({ ...f, indicadoWhatsapp }))}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2 p-4 pt-2 border-t border-netflix-border/80 shrink-0">
               <button
                 type="button"
-                onClick={() => { setModal(null); setForm({ id: 0, indicadorRoveId: '', indicadoNome: '', indicadoWhatsapp: '', status: 'pendente' }) }}
-                className="flex-1 py-2.5 px-4 border border-netflix-border rounded-xl text-sm font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
+                onClick={() => {
+                  setModal(null)
+                  setForm(emptyForm())
+                }}
+                className="py-1.5 px-3 border border-netflix-border rounded-lg text-xs font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
               >
                 Cancelar
               </button>
               <button
                 type="button"
                 onClick={save}
-                className="flex-1 py-2.5 px-4 bg-primary-600 text-white rounded-xl text-sm font-medium hover:bg-primary-700 transition-colors shadow-lg shadow-primary-900/30"
+                className="flex-1 py-1.5 px-3 bg-primary-600 text-white rounded-lg text-xs font-medium hover:bg-primary-700 transition-colors shadow-lg shadow-primary-900/30"
               >
                 Guardar
               </button>
             </div>
           </div>
-        </div>
+        </RoveModalOverlay>
       )}
     </motion.div>
   )

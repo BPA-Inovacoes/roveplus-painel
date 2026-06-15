@@ -9,7 +9,7 @@ async function main() {
   const hash = await bcrypt.hash(password, 10)
   const user = await prisma.user.upsert({
     where: { email },
-    update: {},
+    update: { password: hash },
     create: {
       nome: 'Administrador',
       email,
@@ -17,6 +17,15 @@ async function main() {
       role: 'admin',
     },
   })
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "User"
+    ADD COLUMN IF NOT EXISTS password_plain TEXT
+  `)
+  await prisma.$executeRawUnsafe(
+    'UPDATE "User" SET password_plain = $1 WHERE id = $2',
+    password,
+    user.id
+  )
   console.log('Admin criado:', user.email)
 }
 

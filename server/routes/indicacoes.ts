@@ -1,23 +1,13 @@
 import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
+import { ensureRoveIdColumn, getRoveIdsMap } from '../lib/roveId.js'
 import { authMiddleware } from '../middleware/auth.js'
 import { auditLog } from '../middleware/audit.js'
+import { notifyIndicacaoCreated, notifyIndicacaoConfirmed } from '../lib/whatsappNotify.js'
 
 const router = Router()
 
 router.use(authMiddleware)
-
-async function ensureRoveIdColumn(): Promise<void> {
-  await prisma.$executeRawUnsafe(`
-    ALTER TABLE clients
-    ADD COLUMN IF NOT EXISTS rove_id TEXT
-  `)
-  await prisma.$executeRawUnsafe(`
-    CREATE UNIQUE INDEX IF NOT EXISTS clients_rove_id_unique_idx
-    ON clients (rove_id)
-    WHERE rove_id IS NOT NULL
-  `)
-}
 
 router.get('/', async (req, res) => {
   const { status } = req.query
@@ -29,13 +19,7 @@ router.get('/', async (req, res) => {
     orderBy: { createdAt: 'desc' },
   })
   const ids = Array.from(new Set(list.map((i) => i.indicadorId)))
-  const rows = ids.length
-    ? await prisma.$queryRawUnsafe<Array<{ id: number; rove_id: string | null }>>(
-        `SELECT id, rove_id FROM clients WHERE id = ANY($1::int[])`,
-        ids
-      ).catch(() => [])
-    : []
-  const roveMap = new Map<number, string | null>(rows.map((r) => [r.id, r.rove_id]))
+  const roveMap = ids.length ? await getRoveIdsMap(ids).catch(() => new Map<number, string | null>()) : new Map()
   res.json(
     list.map((i) => ({
       ...i,
@@ -90,11 +74,13 @@ router.post('/', auditLog('create_indicacao', 'indicacao'), async (req, res) => 
     where: { id: idIndicador },
     data: { indicacoes: { increment: 1 } },
   })
+  void notifyIndicacaoCreated(idIndicador, nome, String(indicadoWhatsapp ?? '').trim())
   res.status(201).json(indicacao)
 })
 
 router.patch('/:id', auditLog('update_indicacao', 'indicacao'), async (req, res) => {
   const id = Number(req.params.id)
+  const before = await prisma.indicacao.findUnique({ where: { id } })
   const { status, indicadoNome, indicadoWhatsapp } = req.body
   const data: { status?: string; indicadoNome?: string; indicadoWhatsapp?: string } = {}
   if (status != null) data.status = String(status)
@@ -105,6 +91,9 @@ router.patch('/:id', auditLog('update_indicacao', 'indicacao'), async (req, res)
     where: { id },
     data,
   })
+  if (status === 'confirmada' && before?.status !== 'confirmada') {
+    void notifyIndicacaoConfirmed(id)
+  }
   res.json(indicacao)
 })
 

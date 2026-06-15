@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { LogIn, Mail, Lock } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { defaultPanelPath } from '../lib/panelRoles'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -17,8 +18,8 @@ export default function Login() {
     setError('')
     setLoading(true)
     try {
-      await login(email, password)
-      navigate('/', { replace: true })
+      const loggedIn = await login(email, password)
+      navigate(defaultPanelPath(loggedIn.role), { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao entrar')
     } finally {
@@ -143,7 +144,7 @@ export default function Login() {
           </p>
           <p className="text-gray-500 text-sm mt-3">
             É cliente Rove+?{' '}
-            <Link to="/cliente/login" className="text-primary-400 hover:text-primary-300 font-medium">
+            <Link to="/" className="text-primary-400 hover:text-primary-300 font-medium">
               Área do cliente
             </Link>
           </p>

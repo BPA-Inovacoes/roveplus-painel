@@ -1,7 +1,9 @@
 import { useState } from 'react'
+import { RoveModalOverlay } from '../components/RoveModalOverlay'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { LogIn, Phone, KeyRound, Shield, Sparkles, LifeBuoy } from 'lucide-react'
+import { LogIn, Phone, KeyRound, Shield, Sparkles, LifeBuoy, Globe, ExternalLink } from 'lucide-react'
+import { ROVE_PUBLIC_SITE_URL } from '../lib/roveSite'
 import { useClientPortal } from '../contexts/ClientPortalContext'
 import { clientPortalApi } from '../api/clientPortal'
 
@@ -201,12 +203,24 @@ export default function ClienteLogin() {
                 Acesso ao painel
               </Link>
             </p>
+            <p className="text-gray-500 text-sm mt-3 text-center">
+              <a
+                href={ROVE_PUBLIC_SITE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-primary-400 hover:text-primary-300 font-medium underline-offset-2 hover:underline"
+              >
+                <Globe className="w-4 h-4" />
+                Site da Rove+
+                <ExternalLink className="w-3.5 h-3.5 opacity-80" />
+              </a>
+            </p>
           </div>
         </motion.div>
       </div>
 
       {showRecover && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <RoveModalOverlay>
           <div className="bg-netflix-card rounded-2xl shadow-2xl border border-primary-500/30 max-w-sm w-full overflow-hidden">
             <div className="p-6 border-b border-netflix-border/80">
               <div className="flex items-center gap-3">
@@ -257,7 +271,7 @@ export default function ClienteLogin() {
               </div>
             </form>
           </div>
-        </div>
+        </RoveModalOverlay>
       )}
     </div>
   )

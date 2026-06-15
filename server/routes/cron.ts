@@ -1,6 +1,11 @@
 import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
 import { sendWhatsAppMessage, templates } from '../services/whatsapp.js'
+import {
+  notifyPanelUsers,
+  LEMBRETE_DIAS,
+  formatDateBr,
+} from '../lib/whatsappNotify.js'
 
 const router = Router()
 
@@ -48,6 +53,20 @@ router.get('/alertas', async (req, res) => {
     select: { id: true, nome: true, status: true, _count: { select: { clients: true } } },
     orderBy: { nome: 'asc' },
   })
+
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE servidores ADD COLUMN IF NOT EXISTS data_pagamento TIMESTAMP
+  `).catch(() => {})
+  const servidoresPagamento = await prisma.$queryRawUnsafe<
+    Array<{ id: number; nome: string; data_pagamento: Date | null }>
+  >(
+    `SELECT id, nome, data_pagamento FROM servidores
+     WHERE tipo = 'principal' AND data_pagamento IS NOT NULL
+       AND data_pagamento >= $1 AND data_pagamento <= $2
+     ORDER BY data_pagamento ASC`,
+    today,
+    in7Days
+  ).catch(() => [])
 
   /** Vencimento automático: WhatsApp + marcar vencido; ou só WhatsApp se o painel já marcou vencido. */
   let vencidosAutoSent = 0
@@ -106,45 +125,54 @@ router.get('/alertas', async (req, res) => {
       const dataFim = new Date(c.dataFim)
       dataFim.setHours(0, 0, 0, 0)
       const dias = Math.ceil((dataFim.getTime() - today.getTime()) / (24 * 60 * 60 * 1000))
+      if (!LEMBRETE_DIAS.includes(dias as (typeof LEMBRETE_DIAS)[number])) continue
       const msg = templates.lembreteRenovacao(c.nome, c.dataFim.toLocaleDateString('pt-BR'), dias)
       const ok = await sendWhatsAppMessage(c.whatsapp, msg)
       if (ok) sent++
     }
   }
 
-  // Se houver alertas (ou teste), notificar admin no WhatsApp
+  const inscricoesPendentes = await prisma.client.count({
+    where: { servico: 'netflix', inscricaoPaga: false, status: { not: 'cancelado' } },
+  }).catch(() => 0)
+  const indicacoesPendentes = await prisma.indicacao.count({ where: { status: 'pendente' } }).catch(() => 0)
+
   const shouldNotifyAdmin =
     testAdmin ||
     clients.length > 0 ||
     vencidosAutoSent > 0 ||
     salasVencendo.length > 0 ||
     salasVencidas.length > 0 ||
-    servidoresProblema.length > 0
+    servidoresProblema.length > 0 ||
+    servidoresPagamento.length > 0 ||
+    inscricoesPendentes > 0 ||
+    indicacoesPendentes > 0
   if (shouldNotifyAdmin) {
-    const admins = await prisma.user.findMany({
-      where: { role: 'admin', whatsapp: { not: null } },
-      select: { whatsapp: true },
-    })
-
-    // Sala.dataFim é opcional no schema (DateTime?); por isso pode vir null no Prisma.
-    const formatDate = (d: Date | null) => (d ? d.toLocaleDateString('pt-BR') : '—')
-
     const adminMsg = testAdmin
-      ? 'Rove+ Painel: Teste de alertas do admin (clientes/salas/servidores). Se recebeu esta mensagem, está a funcionar.'
+      ? 'Teste de alertas do painel (clientes/salas/servidores). Se recebeu esta mensagem, está a funcionar.'
       : [
-          vencidosAutoSent > 0 ? `Clientes notificados (vencimento automático, WhatsApp): ${vencidosAutoSent}` : null,
+          vencidosAutoSent > 0 ? `Clientes notificados (vencimento automático): ${vencidosAutoSent}` : null,
+          sent > 0 ? `Lembretes de renovação enviados hoje: ${sent}` : null,
           clients.length > 0 ? `Clientes a vencer (7 dias): ${clients.length}` : null,
+          inscricoesPendentes > 0 ? `Inscrições Netflix pendentes: ${inscricoesPendentes}` : null,
+          indicacoesPendentes > 0 ? `Indicações pendentes: ${indicacoesPendentes}` : null,
           salasVencendo.length > 0
             ? `Salas a vencer (7 dias): ${salasVencendo.length} (${salasVencendo
                 .slice(0, 5)
-                .map((s) => `${s.nome} (${formatDate(s.dataFim)})`)
+                .map((s) => `${s.nome} (${formatDateBr(s.dataFim!)})`)
                 .join(', ')}${salasVencendo.length > 5 ? '...' : ''})`
             : null,
           salasVencidas.length > 0
             ? `Salas vencidas: ${salasVencidas.length} (${salasVencidas
                 .slice(0, 5)
-                .map((s) => `${s.nome} (${formatDate(s.dataFim)})`)
+                .map((s) => `${s.nome} (${formatDateBr(s.dataFim!)})`)
                 .join(', ')}${salasVencidas.length > 5 ? '...' : ''})`
+            : null,
+          servidoresPagamento.length > 0
+            ? `Servidores com pagamento nos próximos 7 dias: ${servidoresPagamento.length} (${servidoresPagamento
+                .slice(0, 5)
+                .map((s) => `${s.nome} (${formatDateBr(s.data_pagamento!)})`)
+                .join(', ')}${servidoresPagamento.length > 5 ? '...' : ''})`
             : null,
           servidoresProblema.length > 0
             ? `Servidores instável/offline: ${servidoresProblema.length} (${servidoresProblema
@@ -154,13 +182,9 @@ router.get('/alertas', async (req, res) => {
             : null,
         ]
           .filter(Boolean)
-          .join('\n') + '\n\nAceda ao painel para detalhes.'
+          .join('\n')
 
-    for (const a of admins) {
-      if (a.whatsapp) {
-        await sendWhatsAppMessage(a.whatsapp, adminMsg)
-      }
-    }
+    void notifyPanelUsers('resumo', adminMsg)
   }
 
   res.json({

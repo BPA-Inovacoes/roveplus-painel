@@ -1,10 +1,38 @@
 import { useEffect, useMemo, useState } from 'react'
+import { RoveModalOverlay } from '../components/RoveModalOverlay'
+import { RoveWhatsappLink } from '../components/RoveWhatsappLink'
 import { Link, Navigate } from 'react-router-dom'
-import { Edit2, Trash2, KeyRound, UserCog, AlertTriangle, CheckCircle, Smartphone, ExternalLink, Search, Eye, EyeOff } from 'lucide-react'
+import {
+  Edit2,
+  Trash2,
+  KeyRound,
+  UserCog,
+  AlertTriangle,
+  CheckCircle,
+  Smartphone,
+  ExternalLink,
+  Search,
+  Eye,
+  EyeOff,
+  RefreshCw,
+  Plus,
+  Bell,
+} from 'lucide-react'
+import { RoveSelect } from '../components/RoveSelect'
+import { WhatsappAoInput } from '../components/WhatsappAoInput'
+import { ROVE_FORM_INPUT_SM, RoveFormLabel } from '../components/roveFormUi'
+import { emptyWhatsapp, formatWhatsapp, isWhatsappValid, nationalDigitsFromWhatsapp } from '../utils/whatsapp'
 import { useAuth } from '../contexts/AuthContext'
 import { useAlert } from '../contexts/AlertContext'
 import { api } from '../api/client'
 import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
+import {
+  PANEL_ALERT_CATEGORIES,
+  PANEL_ALERT_META,
+  defaultAlertScopesForRole,
+  formatAlertScopesSummary,
+  type PanelAlertCategory,
+} from '../lib/panelAlertPrefs'
 
 export interface UserRow {
   id: number
@@ -14,6 +42,11 @@ export interface UserRow {
   role: string
   status?: string
   createdAt: string
+  /** Última senha definida no painel (texto plano, só admin) */
+  passwordPlain?: string | null
+  /** null = padrão do perfil */
+  alertScopes?: PanelAlertCategory[] | null
+  alertScopesEffective?: PanelAlertCategory[]
 }
 
 interface ClientAccessRow {
@@ -31,6 +64,7 @@ const ROLES_OPERADORES = [
   { value: 'geral', label: 'Geral' },
   { value: 'netflix', label: 'Netflix' },
   { value: 'iptv', label: 'IPTV' },
+  { value: 'financeiro', label: 'Financeiro' },
 ]
 
 const ROLE_STYLES: Record<
@@ -62,6 +96,11 @@ const ROLE_STYLES: Record<
     chip: 'bg-emerald-500/15 text-emerald-200',
     pill: 'bg-emerald-500/15 text-emerald-200 border border-emerald-400/40',
   },
+  financeiro: {
+    label: 'Financeiro',
+    chip: 'bg-lime-500/15 text-lime-200',
+    pill: 'bg-lime-500/15 text-lime-200 border border-lime-400/40',
+  },
 }
 
 function formatDate(date: string) {
@@ -73,6 +112,160 @@ const SERVICO_LABEL: Record<string, string> = {
   netflix: 'Netflix',
 }
 
+function renderClientPortalPin(c: ClientAccessRow, showPins: boolean) {
+  if (!c.areaClienteAtiva) return '—'
+  if (!showPins) return '••••'
+  if (c.portalPinPlain) return c.portalPinPlain
+  return (
+    <span className="text-xs text-gray-400 font-sans font-normal">
+      Sem PIN em texto — use «PIN» para redefinir
+    </span>
+  )
+}
+
+function renderOperadorPassword(u: UserRow, showPins: boolean) {
+  if (!showPins) return '••••'
+  if (u.passwordPlain) return u.passwordPlain
+  return (
+    <span className="text-xs text-gray-400 font-sans font-normal">
+      Sem senha em texto — use «Redefinir senha» para voltar a ver
+    </span>
+  )
+}
+
+type AlertFormState = {
+  mode: 'role_default' | 'custom'
+  scopes: PanelAlertCategory[]
+}
+
+function AlertScopesEditor({
+  role,
+  value,
+  onChange,
+}: {
+  role: string
+  value: AlertFormState
+  onChange: (next: AlertFormState) => void
+}) {
+  const roleDefaults = defaultAlertScopesForRole(role)
+  const groups: Array<{ key: string; title: string; items: PanelAlertCategory[] }> = [
+    {
+      key: 'clientes',
+      title: 'Clientes',
+      items: ['clientes_netflix', 'clientes_iptv'],
+    },
+    {
+      key: 'operacao',
+      title: 'Operação',
+      items: ['financeiro', 'salas', 'servidores', 'indicacoes'],
+    },
+    {
+      key: 'sistema',
+      title: 'Sistema',
+      items: ['utilizadores', 'resumo'],
+    },
+  ]
+
+  const toggleScope = (cat: PanelAlertCategory) => {
+    const set = new Set(value.scopes)
+    if (set.has(cat)) set.delete(cat)
+    else set.add(cat)
+    onChange({ mode: 'custom', scopes: PANEL_ALERT_CATEGORIES.filter((c) => set.has(c)) })
+  }
+
+  return (
+    <div className="border-t border-netflix-border/60 pt-3 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500">
+            Alertas WhatsApp
+          </p>
+          <p className="text-[10px] text-gray-600 mt-0.5">
+            Escolha que notificações este operador recebe no WhatsApp.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            onClick={() => onChange({ mode: 'role_default', scopes: roleDefaults })}
+            className={`px-2 py-1 rounded text-[10px] font-medium border transition-colors ${
+              value.mode === 'role_default'
+                ? 'border-primary-500/50 bg-primary-500/15 text-primary-200'
+                : 'border-netflix-border/60 text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            Padrão do perfil
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              onChange({ mode: 'custom', scopes: [...PANEL_ALERT_CATEGORIES] })
+            }
+            className="px-2 py-1 rounded text-[10px] font-medium border border-netflix-border/60 text-gray-400 hover:text-gray-200 transition-colors"
+          >
+            Todos
+          </button>
+          <button
+            type="button"
+            onClick={() => onChange({ mode: 'custom', scopes: [] })}
+            className="px-2 py-1 rounded text-[10px] font-medium border border-netflix-border/60 text-gray-400 hover:text-gray-200 transition-colors"
+          >
+            Nenhum
+          </button>
+        </div>
+      </div>
+
+      {value.mode === 'role_default' ? (
+        <p className="text-xs text-gray-400 rounded-lg border border-netflix-border/50 bg-netflix-panel/40 px-3 py-2">
+          Usa o padrão do perfil{' '}
+          <span className="text-gray-300">{ROLE_STYLES[role]?.label ?? role}</span>:{' '}
+          {roleDefaults.map((c) => PANEL_ALERT_META[c].label).join(', ')}
+        </p>
+      ) : (
+        <div className="space-y-2.5">
+          {groups.map((g) => (
+            <div key={g.key}>
+              <p className="text-[10px] font-medium text-gray-500 mb-1">{g.title}</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                {g.items.map((cat) => {
+                  const meta = PANEL_ALERT_META[cat]
+                  const checked = value.scopes.includes(cat)
+                  return (
+                    <label
+                      key={cat}
+                      className={`flex items-start gap-2 rounded-lg border px-2.5 py-2 cursor-pointer transition-colors ${
+                        checked
+                          ? 'border-primary-500/40 bg-primary-500/10'
+                          : 'border-netflix-border/50 bg-netflix-panel/30 hover:bg-netflix-hover/40'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 rounded border-netflix-border"
+                        checked={checked}
+                        onChange={() => toggleScope(cat)}
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-xs font-medium text-gray-200">{meta.label}</span>
+                        <span className="block text-[10px] text-gray-500 leading-snug">
+                          {meta.description}
+                        </span>
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+          {value.scopes.length === 0 && (
+            <p className="text-xs text-amber-400/90">Seleccione pelo menos uma categoria.</p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Utilizadores() {
   const { user } = useAuth()
   const { showError, showWarning, showInfo } = useAlert()
@@ -82,29 +275,69 @@ export default function Utilizadores() {
   const [error, setError] = useState<string | null>(null)
   const [modal, setModal] = useState<'create' | 'edit' | null>(null)
   const [editing, setEditing] = useState<UserRow | null>(null)
-  const [form, setForm] = useState({ nome: '', email: '', whatsapp: '', password: '', role: 'geral' })
+  const [form, setForm] = useState<{
+    nome: string
+    email: string
+    whatsapp: string
+    password: string
+    role: string
+    alerts: AlertFormState
+  }>({
+    nome: '',
+    email: '',
+    whatsapp: emptyWhatsapp(),
+    password: '',
+    role: 'geral',
+    alerts: { mode: 'role_default', scopes: defaultAlertScopesForRole('geral') },
+  })
   const [submitLoading, setSubmitLoading] = useState(false)
   const [userToDelete, setUserToDelete] = useState<UserRow | null>(null)
+  const [userForAlerts, setUserForAlerts] = useState<UserRow | null>(null)
+  const [alertsForm, setAlertsForm] = useState<AlertFormState>({
+    mode: 'role_default',
+    scopes: defaultAlertScopesForRole('geral'),
+  })
   const [userToSuspender, setUserToSuspender] = useState<UserRow | null>(null)
   const [userToAtivar, setUserToAtivar] = useState<UserRow | null>(null)
   const [userToResetPassword, setUserToResetPassword] = useState<UserRow | null>(null)
   const [resetPasswordForm, setResetPasswordForm] = useState({ password: '', confirm: '' })
   const [tablePage, setTablePage] = useState(1)
+  const [operadorFilter, setOperadorFilter] = useState({ role: '', status: '' })
+  const [operadorSearch, setOperadorSearch] = useState('')
+  const [operadorSearchDebounced, setOperadorSearchDebounced] = useState('')
 
   const [clients, setClients] = useState<ClientAccessRow[]>([])
   const [clientsLoading, setClientsLoading] = useState(false)
   const [clientSearch, setClientSearch] = useState('')
+  const [clientSearchDebounced, setClientSearchDebounced] = useState('')
   const [serviceFilter, setServiceFilter] = useState<'todos' | 'iptv' | 'netflix'>('todos')
   const [portalFilter, setPortalFilter] = useState<'todos' | 'com' | 'sem'>('todos')
   const [clientTablePage, setClientTablePage] = useState(1)
   const [clientForPin, setClientForPin] = useState<ClientAccessRow | null>(null)
   const [pinForm, setPinForm] = useState({ pin: '', confirm: '' })
   const [clientToRevoke, setClientToRevoke] = useState<ClientAccessRow | null>(null)
-  const [revealPinIds, setRevealPinIds] = useState<Set<number>>(() => new Set())
+  const [showPins, setShowPins] = useState(false)
 
-  const totalTablePages = Math.max(1, Math.ceil(users.length / ROWS_PER_PAGE))
-  const tablePageClamped = Math.min(tablePage, totalTablePages)
-  const pagedUsers = users.slice((tablePageClamped - 1) * ROWS_PER_PAGE, tablePageClamped * ROWS_PER_PAGE)
+  const filteredUsers = useMemo(() => {
+    const q = operadorSearchDebounced.trim().toLowerCase()
+    return users.filter((u) => {
+      if (operadorFilter.role) {
+        const role = u.role === 'suporte' ? 'geral' : u.role
+        if (role !== operadorFilter.role) return false
+      }
+      if (operadorFilter.status && (u.status || 'ativo') !== operadorFilter.status) return false
+      if (!q) return true
+      const hay = [u.nome, u.email, u.whatsapp].filter(Boolean).join(' ').toLowerCase()
+      return hay.includes(q)
+    })
+  }, [users, operadorFilter, operadorSearchDebounced])
+
+  const totalOperadorPages = Math.max(1, Math.ceil(filteredUsers.length / ROWS_PER_PAGE))
+  const operadorPageClamped = Math.min(tablePage, totalOperadorPages)
+  const pagedUsers = filteredUsers.slice(
+    (operadorPageClamped - 1) * ROWS_PER_PAGE,
+    operadorPageClamped * ROWS_PER_PAGE
+  )
 
   const load = () => {
     setLoading(true)
@@ -120,17 +353,34 @@ export default function Utilizadores() {
   }, [])
 
   useEffect(() => {
+    const t = window.setTimeout(() => setOperadorSearchDebounced(operadorSearch), 300)
+    return () => window.clearTimeout(t)
+  }, [operadorSearch])
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setClientSearchDebounced(clientSearch), 300)
+    return () => window.clearTimeout(t)
+  }, [clientSearch])
+
+  useEffect(() => {
+    setTablePage(1)
+  }, [operadorFilter, operadorSearchDebounced])
+
+  useEffect(() => {
+    setClientTablePage(1)
+  }, [clientSearchDebounced, serviceFilter, portalFilter])
+
+  useEffect(() => {
     if (section !== 'clientes') return
     let cancelled = false
 
-    const loadClients = (opts: { resetReveal: boolean; withLoading: boolean }) => {
+    const loadClients = (opts: { withLoading: boolean }) => {
       if (opts.withLoading) setClientsLoading(true)
       return api
         .get<ClientAccessRow[]>('/api/clients?includePortalPin=1')
         .then((data) => {
           if (cancelled) return
           setClients(data)
-          if (opts.resetReveal) setRevealPinIds(new Set())
         })
         .catch((e) => {
           if (!cancelled) showError(e instanceof Error ? e.message : 'Erro ao carregar clientes')
@@ -140,17 +390,17 @@ export default function Utilizadores() {
         })
     }
 
-    void loadClients({ resetReveal: true, withLoading: true })
+    void loadClients({ withLoading: true })
 
     const refetch = () => {
       if (document.visibilityState !== 'visible') return
-      void loadClients({ resetReveal: false, withLoading: false })
+      void loadClients({ withLoading: false })
     }
     const onWindowFocus = () => {
-      void loadClients({ resetReveal: false, withLoading: false })
+      void loadClients({ withLoading: false })
     }
     const poll = window.setInterval(() => {
-      void loadClients({ resetReveal: false, withLoading: false })
+      void loadClients({ withLoading: false })
     }, 20_000)
 
     document.addEventListener('visibilitychange', refetch)
@@ -165,7 +415,7 @@ export default function Utilizadores() {
   }, [section, showError])
 
   const filteredClients = useMemo(() => {
-    const q = clientSearch.trim().toLowerCase()
+    const q = clientSearchDebounced.trim().toLowerCase()
     return clients.filter((c) => {
       if (serviceFilter !== 'todos' && c.servico !== serviceFilter) return false
       if (portalFilter === 'com' && !c.areaClienteAtiva) return false
@@ -176,7 +426,7 @@ export default function Utilizadores() {
         String(c.whatsapp).toLowerCase().includes(q)
       )
     })
-  }, [clients, clientSearch, serviceFilter, portalFilter])
+  }, [clients, clientSearchDebounced, serviceFilter, portalFilter])
 
   const totalClientPages = Math.max(1, Math.ceil(filteredClients.length / ROWS_PER_PAGE))
   const clientPageClamped = Math.min(clientTablePage, totalClientPages)
@@ -184,10 +434,6 @@ export default function Utilizadores() {
     (clientPageClamped - 1) * ROWS_PER_PAGE,
     clientPageClamped * ROWS_PER_PAGE
   )
-
-  useEffect(() => {
-    setClientTablePage(1)
-  }, [clientSearch, serviceFilter, portalFilter])
 
   async function confirmarPinCliente() {
     if (!clientForPin) return
@@ -241,27 +487,86 @@ export default function Utilizadores() {
   }
 
   const openCreate = () => {
-    setForm({ nome: '', email: '', whatsapp: '', password: '', role: 'geral' })
+    setForm({
+      nome: '',
+      email: '',
+      whatsapp: emptyWhatsapp(),
+      password: '',
+      role: 'geral',
+      alerts: { mode: 'role_default', scopes: defaultAlertScopesForRole('geral') },
+    })
     setEditing(null)
     setModal('create')
   }
 
   const openEdit = (u: UserRow) => {
-    setForm({ nome: u.nome, email: u.email, whatsapp: u.whatsapp ?? '', password: '', role: u.role === 'admin' ? 'geral' : u.role })
+    const role = u.role === 'admin' ? 'geral' : u.role
+    const hasCustom = Array.isArray(u.alertScopes) && u.alertScopes.length > 0
+    setForm({
+      nome: u.nome,
+      email: u.email,
+      whatsapp: u.whatsapp ? formatWhatsapp(u.whatsapp) : emptyWhatsapp(),
+      password: '',
+      role: u.role === 'admin' ? 'geral' : u.role,
+      alerts: hasCustom
+        ? { mode: 'custom', scopes: u.alertScopes! }
+        : { mode: 'role_default', scopes: defaultAlertScopesForRole(role) },
+    })
     setEditing(u)
     setModal('edit')
+  }
+
+  const openAlertsModal = (u: UserRow) => {
+    const hasCustom = Array.isArray(u.alertScopes) && u.alertScopes.length > 0
+    setAlertsForm(
+      hasCustom
+        ? { mode: 'custom', scopes: u.alertScopes! }
+        : { mode: 'role_default', scopes: defaultAlertScopesForRole(u.role) }
+    )
+    setUserForAlerts(u)
   }
 
   const closeModal = () => {
     setModal(null)
     setEditing(null)
-    setForm({ nome: '', email: '', whatsapp: '', password: '', role: 'geral' })
+    setForm({
+      nome: '',
+      email: '',
+      whatsapp: emptyWhatsapp(),
+      password: '',
+      role: 'geral',
+      alerts: { mode: 'role_default', scopes: defaultAlertScopesForRole('geral') },
+    })
+  }
+
+  function buildAlertPayload(alerts: AlertFormState, forCreate = false) {
+    if (alerts.mode === 'role_default') {
+      return forCreate ? {} : { useRoleAlertDefaults: true }
+    }
+    if (alerts.scopes.length === 0) return null
+    return { alertScopes: alerts.scopes }
+  }
+
+  function validateWhatsappOptional(whatsapp: string): boolean {
+    const wa = whatsapp.trim()
+    const filled = nationalDigitsFromWhatsapp(wa).length > 0
+    if (filled && !isWhatsappValid(wa)) {
+      showWarning('WhatsApp inválido (+244, +351 ou +55 com número completo).')
+      return false
+    }
+    return true
   }
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault()
     if (!form.nome.trim() || !form.email.trim() || !form.password) {
       setError('Preencha nome, email e senha.')
+      return
+    }
+    if (!validateWhatsappOptional(form.whatsapp)) return
+    const alertPayload = buildAlertPayload(form.alerts, true)
+    if (alertPayload === null) {
+      showWarning('Seleccione pelo menos uma categoria de alerta WhatsApp.')
       return
     }
     setSubmitLoading(true)
@@ -274,6 +579,7 @@ export default function Utilizadores() {
         email: form.email.trim(),
         password: form.password,
         role: form.role,
+        ...alertPayload,
       })
       .then(() => {
         closeModal()
@@ -286,6 +592,12 @@ export default function Utilizadores() {
   const handleEdit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!editing || !form.nome.trim() || !form.email.trim()) return
+    if (!validateWhatsappOptional(form.whatsapp)) return
+    const alertPayload = buildAlertPayload(form.alerts)
+    if (alertPayload === null) {
+      showWarning('Seleccione pelo menos uma categoria de alerta WhatsApp.')
+      return
+    }
     setSubmitLoading(true)
     setError(null)
     api
@@ -294,6 +606,7 @@ export default function Utilizadores() {
         email: form.email.trim(),
         whatsapp: form.whatsapp?.trim() || null,
         role: form.role,
+        ...alertPayload,
       })
       .then(() => {
         closeModal()
@@ -301,6 +614,26 @@ export default function Utilizadores() {
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Erro ao guardar'))
       .finally(() => setSubmitLoading(false))
+  }
+
+  async function confirmarAlertas() {
+    if (!userForAlerts) return
+    const alertPayload = buildAlertPayload(alertsForm)
+    if (alertPayload === null) {
+      showWarning('Seleccione pelo menos uma categoria de alerta WhatsApp.')
+      return
+    }
+    setSubmitLoading(true)
+    try {
+      await api.patch(`/api/users/${userForAlerts.id}`, alertPayload)
+      setUserForAlerts(null)
+      load()
+      showInfo('Preferências de alerta actualizadas.')
+    } catch (e) {
+      showError(e instanceof Error ? e.message : 'Erro ao guardar alertas')
+    } finally {
+      setSubmitLoading(false)
+    }
   }
 
   async function confirmarExcluir() {
@@ -379,7 +712,7 @@ export default function Utilizadores() {
   }
 
   if (user && user.role !== 'admin') {
-    return <Navigate to="/" replace />
+    return <Navigate to="/clientes" replace />
   }
 
   const isLastAdmin = (u: UserRow) => {
@@ -388,16 +721,16 @@ export default function Utilizadores() {
   }
 
   const stats = {
-    total: users.length,
-    administradores: users.filter((u) => u.role === 'admin').length,
-    operadores: users.filter((u) => u.role !== 'admin').length,
-    ativos: users.filter((u) => (u.status || 'ativo') === 'ativo').length,
-    suspensos: users.filter((u) => u.status === 'suspenso').length,
+    total: filteredUsers.length,
+    administradores: filteredUsers.filter((u) => u.role === 'admin').length,
+    operadores: filteredUsers.filter((u) => u.role !== 'admin').length,
+    ativos: filteredUsers.filter((u) => (u.status || 'ativo') === 'ativo').length,
+    suspensos: filteredUsers.filter((u) => u.status === 'suspenso').length,
   }
 
   const clientPortalStats = {
-    total: clients.length,
-    comPortal: clients.filter((c) => c.areaClienteAtiva).length,
+    total: filteredClients.length,
+    comPortal: filteredClients.filter((c) => c.areaClienteAtiva).length,
   }
 
   return (
@@ -461,14 +794,29 @@ export default function Utilizadores() {
                 <span className="font-semibold">{stats.suspensos}</span> suspensos
               </span>
             </div>
-            <button
-              type="button"
-              onClick={openCreate}
-              className="flex items-center gap-2 py-2 px-4 bg-primary-600 text-white rounded-lg hover:bg-primary-700 text-sm font-medium shadow-lg shadow-primary-900/30 shrink-0"
-            >
-              <span className="text-base leading-none">＋</span>
-              Novo utilizador
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowPins((v) => !v)}
+                className={`flex items-center gap-2 py-2 px-4 rounded-lg text-sm font-medium border transition-colors ${
+                  showPins
+                    ? 'border-primary-500/45 bg-primary-500/15 text-primary-200 hover:bg-primary-500/25'
+                    : 'border-netflix-border/60 bg-netflix-panel/80 text-gray-300 hover:bg-netflix-hover hover:text-white'
+                }`}
+                title={showPins ? 'Ocultar PIN na tabela' : 'Mostrar PIN na tabela'}
+              >
+                {showPins ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                {showPins ? 'Ocultar PIN' : 'Mostrar PIN'}
+              </button>
+              <button
+                type="button"
+                onClick={openCreate}
+                className="flex items-center gap-2 py-2 px-4 bg-primary-600 text-white rounded-lg hover:bg-primary-700 text-sm font-medium shadow-lg shadow-primary-900/30 shrink-0"
+              >
+                <Plus className="w-4 h-4" />
+                Novo utilizador
+              </button>
+            </div>
           </div>
         ) : (
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -480,13 +828,28 @@ export default function Utilizadores() {
                 <span className="font-semibold">{clientPortalStats.comPortal}</span> com área /cliente ativa
               </span>
             </div>
-            <Link
-              to="/clientes"
-              className="inline-flex items-center gap-2 py-2 px-4 rounded-lg border border-netflix-border/60 bg-netflix-panel/80 text-gray-200 text-sm hover:bg-netflix-hover transition-colors"
-            >
-              Abrir CRM Clientes
-              <ExternalLink className="w-4 h-4" />
-            </Link>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowPins((v) => !v)}
+                className={`flex items-center gap-2 py-2 px-4 rounded-lg text-sm font-medium border transition-colors ${
+                  showPins
+                    ? 'border-primary-500/45 bg-primary-500/15 text-primary-200 hover:bg-primary-500/25'
+                    : 'border-netflix-border/60 bg-netflix-panel/80 text-gray-300 hover:bg-netflix-hover hover:text-white'
+                }`}
+                title={showPins ? 'Ocultar PIN na tabela' : 'Mostrar PIN na tabela'}
+              >
+                {showPins ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                {showPins ? 'Ocultar PIN' : 'Mostrar PIN'}
+              </button>
+              <Link
+                to="/clientes"
+                className="inline-flex items-center gap-2 py-2 px-4 rounded-lg border border-netflix-border/60 bg-netflix-panel/80 text-gray-200 text-sm hover:bg-netflix-hover transition-colors"
+              >
+                Abrir CRM Clientes
+                <ExternalLink className="w-4 h-4" />
+              </Link>
+            </div>
           </div>
         )}
       </div>
@@ -497,6 +860,59 @@ export default function Utilizadores() {
         </div>
       )}
 
+      {section === 'operadores' && (
+        <div className="flex flex-wrap items-center gap-2 p-4 rounded-xl bg-netflix-card/60 border border-netflix-border/80">
+          <div className="w-44 min-w-[11rem]">
+            <RoveSelect
+              compact
+              value={operadorFilter.role}
+              onChange={(e) => setOperadorFilter((f) => ({ ...f, role: e.target.value }))}
+              placeholder="Todos os perfis"
+              title="Filtrar por perfil"
+            >
+              <option value="">Todos os perfis</option>
+              <option value="admin">Administrador</option>
+              {ROLES_OPERADORES.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </RoveSelect>
+          </div>
+          <div className="w-40 min-w-[10rem]">
+            <RoveSelect
+              compact
+              value={operadorFilter.status}
+              onChange={(e) => setOperadorFilter((f) => ({ ...f, status: e.target.value }))}
+              placeholder="Todos os estados"
+              title="Filtrar por estado"
+            >
+              <option value="">Todos os estados</option>
+              <option value="ativo">Ativo</option>
+              <option value="suspenso">Suspenso</option>
+            </RoveSelect>
+          </div>
+          <div className="relative flex-1 min-w-[180px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+            <input
+              type="text"
+              placeholder="Nome, email ou WhatsApp..."
+              value={operadorSearch}
+              onChange={(e) => setOperadorSearch(e.target.value)}
+              className="w-full min-h-[32px] pl-10 pr-3 py-1.5 rounded-lg border border-netflix-border bg-netflix-panel text-white placeholder-gray-500 text-xs focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500/50 outline-none transition-colors"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => load()}
+            className="p-2 rounded-lg border border-netflix-border bg-netflix-panel hover:bg-netflix-hover text-gray-300 hover:text-white transition-colors"
+            title="Atualizar lista"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {section === 'operadores' &&
         (loading ? (
           <div className="flex justify-center py-12">
@@ -504,134 +920,172 @@ export default function Utilizadores() {
           </div>
         ) : (
           <div className="bg-netflix-card/80 rounded-xl border border-netflix-border/80 shadow-lg shadow-black/40 overflow-hidden">
-          <table className="min-w-full divide-y divide-netflix-border/80">
-            <thead className="bg-netflix-panel/80">
-              <tr>
-                <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wide w-12">
-                  Nº
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">
-                  Utilizador
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">
-                  WhatsApp
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">
-                  Perfil
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">
-                  Estado
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">
-                  Criado em
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wide">
-                  Ações
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-netflix-border/80">
-              {pagedUsers.map((u, idx) => {
-                const roleStyle = ROLE_STYLES[u.role] ?? ROLE_STYLES.geral
-                return (
-                  <tr key={u.id} className="hover:bg-netflix-hover/80 transition-colors">
-                    <td className="px-4 py-3 text-center text-gray-400 text-sm">{(tablePageClamped - 1) * ROWS_PER_PAGE + idx + 1}</td>
-                    <td className="px-4 py-3 text-sm text-white">
-                      <div className="flex flex-col">
-                        <span className="font-medium">{u.nome}</span>
-                        <span className="text-xs text-gray-400">{u.email}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-300">
-                      {u.whatsapp ? u.whatsapp : '—'}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex items-center gap-2 px-2.5 py-1 text-xs font-medium rounded-full ${roleStyle.pill}`}
-                      >
-                        <span className="h-1.5 w-1.5 rounded-full bg-white/80" />
-                        {roleStyle.label}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
-                          (u.status || 'ativo') === 'ativo' ? 'bg-green-900/50 text-green-300' : 'bg-amber-900/50 text-amber-300'
-                        }`}
-                      >
-                        {(u.status || 'ativo') === 'ativo' ? 'Ativo' : 'Suspenso'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-400">
-                      {formatDate(u.createdAt)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        {(u.status || 'ativo') === 'ativo' && u.role !== 'admin' && !isLastAdmin(u) && (
+            <table className="min-w-full divide-y divide-netflix-border/80">
+              <thead className="bg-netflix-panel/80">
+                <tr>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wide w-12">
+                    Nº
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">
+                    Utilizador
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">
+                    WhatsApp
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">
+                    Perfil
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">
+                    Estado
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">
+                    Alertas
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">
+                    Senha
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wide">
+                    Criado em
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wide">
+                    Ações
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-netflix-border/80">
+                {pagedUsers.map((u, idx) => {
+                  const roleStyle = ROLE_STYLES[u.role] ?? ROLE_STYLES.geral
+                  return (
+                    <tr key={u.id} className="hover:bg-netflix-hover/80 transition-colors">
+                      <td className="px-4 py-3 text-center text-gray-400 text-sm">
+                        {(operadorPageClamped - 1) * ROWS_PER_PAGE + idx + 1}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-white">
+                        <div className="flex flex-col">
+                          <span className="font-medium">{u.nome}</span>
+                          <span className="text-xs text-gray-400">{u.email}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <RoveWhatsappLink value={u.whatsapp} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`inline-flex items-center gap-2 px-2.5 py-1 text-xs font-medium rounded-full ${roleStyle.pill}`}
+                        >
+                          <span className="h-1.5 w-1.5 rounded-full bg-white/80" />
+                          {roleStyle.label}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
+                            (u.status || 'ativo') === 'ativo'
+                              ? 'bg-green-900/50 text-green-300'
+                              : 'bg-amber-900/50 text-amber-300'
+                          }`}
+                        >
+                          {(u.status || 'ativo') === 'ativo' ? 'Ativo' : 'Suspenso'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          onClick={() => openAlertsModal(u)}
+                          className="text-left text-xs text-gray-300 hover:text-primary-300 transition-colors"
+                          title="Configurar alertas WhatsApp"
+                        >
+                          {formatAlertScopesSummary(u.alertScopes, u.role)}
+                          {u.alertScopes?.length ? (
+                            <span className="block text-[10px] text-gray-500 mt-0.5">Personalizado</span>
+                          ) : (
+                            <span className="block text-[10px] text-gray-500 mt-0.5">Padrão do perfil</span>
+                          )}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-300 font-mono">
+                        {renderOperadorPassword(u, showPins)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-400">{formatDate(u.createdAt)}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1">
                           <button
                             type="button"
-                            onClick={() => setUserToSuspender(u)}
-                            title="Suspender"
-                            className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-amber-500/50 bg-amber-500/10 text-amber-300 hover:bg-amber-500/30 hover:text-white shadow-sm shadow-amber-900/40 transition-colors"
+                            onClick={() => openAlertsModal(u)}
+                            title="Alertas WhatsApp"
+                            className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-violet-500/50 bg-violet-500/10 text-violet-300 hover:bg-violet-500/30 hover:text-white shadow-sm shadow-violet-900/40 transition-colors"
                           >
-                            <AlertTriangle className="w-4 h-4" />
+                            <Bell className="w-4 h-4" />
                           </button>
-                        )}
-                        {(u.status || 'ativo') === 'suspenso' && (
-                          <button
-                            type="button"
-                            onClick={() => setUserToAtivar(u)}
-                            title="Ativar"
-                            className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-green-500/50 bg-green-500/10 text-green-300 hover:bg-green-500/30 hover:text-white shadow-sm shadow-green-900/40 transition-colors"
-                          >
-                            <CheckCircle className="w-4 h-4" />
-                          </button>
-                        )}
-                        {u.role !== 'admin' && (
-                          <>
+                          {(u.status || 'ativo') === 'ativo' && u.role !== 'admin' && !isLastAdmin(u) && (
                             <button
                               type="button"
-                              onClick={() => openEdit(u)}
-                              title="Editar"
-                              className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-primary-500/50 bg-primary-500/10 text-primary-300 hover:bg-primary-500/30 hover:text-white hover:border-primary-400 shadow-sm shadow-primary-900/40 transition-colors"
+                              onClick={() => setUserToSuspender(u)}
+                              title="Suspender"
+                              className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-amber-500/50 bg-amber-500/10 text-amber-300 hover:bg-amber-500/30 hover:text-white shadow-sm shadow-amber-900/40 transition-colors"
                             >
-                              <Edit2 className="w-4 h-4" />
+                              <AlertTriangle className="w-4 h-4" />
                             </button>
+                          )}
+                          {(u.status || 'ativo') === 'suspenso' && (
                             <button
                               type="button"
-                              onClick={() => {
-                                setUserToResetPassword(u)
-                                setResetPasswordForm({ password: '', confirm: '' })
-                              }}
-                              title="Redefinir senha"
-                              className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-sky-500/50 bg-sky-500/10 text-sky-300 hover:bg-sky-500/30 hover:text-white shadow-sm shadow-sky-900/40 transition-colors"
+                              onClick={() => setUserToAtivar(u)}
+                              title="Ativar"
+                              className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-green-500/50 bg-green-500/10 text-green-300 hover:bg-green-500/30 hover:text-white shadow-sm shadow-green-900/40 transition-colors"
                             >
-                              <KeyRound className="w-4 h-4" />
+                              <CheckCircle className="w-4 h-4" />
                             </button>
-                          </>
-                        )}
-                        {u.role === 'admin' && (
-                          <span className="text-gray-500 text-xs italic px-2">(único admin)</span>
-                        )}
-                        {!isLastAdmin(u) && (
-                          <button
-                            type="button"
-                            onClick={() => setUserToDelete(u)}
-                            title="Eliminar"
-                            className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-red-500/60 bg-red-500/15 text-red-300 hover:bg-red-500/30 hover:text-white shadow-sm shadow-red-900/40 transition-colors"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-          <TablePagination totalItems={users.length} currentPage={tablePageClamped} onPageChange={setTablePage} />
-        </div>
+                          )}
+                          {u.role !== 'admin' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => openEdit(u)}
+                                title="Editar"
+                                className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-primary-500/50 bg-primary-500/10 text-primary-300 hover:bg-primary-500/30 hover:text-white hover:border-primary-400 shadow-sm shadow-primary-900/40 transition-colors"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setUserToResetPassword(u)
+                                  setResetPasswordForm({ password: '', confirm: '' })
+                                }}
+                                title="Redefinir senha"
+                                className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-sky-500/50 bg-sky-500/10 text-sky-300 hover:bg-sky-500/30 hover:text-white shadow-sm shadow-sky-900/40 transition-colors"
+                              >
+                                <KeyRound className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
+                          {u.role === 'admin' && (
+                            <span className="text-gray-500 text-xs italic px-2">(único admin)</span>
+                          )}
+                          {!isLastAdmin(u) && (
+                            <button
+                              type="button"
+                              onClick={() => setUserToDelete(u)}
+                              title="Eliminar"
+                              className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-red-500/60 bg-red-500/15 text-red-300 hover:bg-red-500/30 hover:text-white shadow-sm shadow-red-900/40 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+            <TablePagination
+              totalItems={filteredUsers.length}
+              currentPage={operadorPageClamped}
+              onPageChange={setTablePage}
+            />
+          </div>
         ))}
 
       {section === 'clientes' &&
@@ -641,43 +1095,58 @@ export default function Utilizadores() {
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="flex flex-col lg:flex-row gap-3 lg:items-center lg:justify-between">
-              <div className="relative flex-1 max-w-md">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+            <div className="flex flex-wrap items-center gap-2 p-4 rounded-xl bg-netflix-card/60 border border-netflix-border/80">
+              <div className="w-40 min-w-[10rem]">
+                <RoveSelect
+                  compact
+                  value={serviceFilter}
+                  onChange={(e) => setServiceFilter(e.target.value as 'todos' | 'iptv' | 'netflix')}
+                  placeholder="Todos os serviços"
+                  title="Filtrar por serviço"
+                >
+                  <option value="todos">Todos os serviços</option>
+                  <option value="iptv">Clientes IPTV</option>
+                  <option value="netflix">Clientes Netflix</option>
+                </RoveSelect>
+              </div>
+              <div className="w-44 min-w-[11rem]">
+                <RoveSelect
+                  compact
+                  value={portalFilter}
+                  onChange={(e) => setPortalFilter(e.target.value as 'todos' | 'com' | 'sem')}
+                  placeholder="Área cliente"
+                  title="Filtrar por área cliente"
+                >
+                  <option value="todos">Área cliente: todos</option>
+                  <option value="com">Com acesso ativo</option>
+                  <option value="sem">Sem acesso</option>
+                </RoveSelect>
+              </div>
+              <div className="relative flex-1 min-w-[180px]">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
                 <input
-                  type="search"
+                  type="text"
                   value={clientSearch}
                   onChange={(e) => setClientSearch(e.target.value)}
-                  placeholder="Pesquisar por nome ou WhatsApp…"
-                  className="w-full pl-10 pr-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500"
+                  placeholder="Nome ou WhatsApp..."
+                  className="w-full min-h-[32px] pl-10 pr-3 py-1.5 rounded-lg border border-netflix-border bg-netflix-panel text-white placeholder-gray-500 text-xs focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500/50 outline-none transition-colors"
                 />
               </div>
-              <div className="flex flex-wrap gap-2.5 items-center">
-                <div className="min-w-[230px] flex items-center gap-2">
-                  <label className="text-[11px] font-medium uppercase tracking-wide text-gray-500 whitespace-nowrap">Serviço</label>
-                  <select
-                    value={serviceFilter}
-                    onChange={(e) => setServiceFilter(e.target.value as 'todos' | 'iptv' | 'netflix')}
-                    className="flex-1 px-2.5 py-1.5 bg-netflix-panel border border-netflix-border rounded-lg text-xs text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
-                  >
-                    <option value="todos">Todos</option>
-                    <option value="iptv">Clientes IPTV</option>
-                    <option value="netflix">Clientes Netflix</option>
-                  </select>
-                </div>
-                <div className="min-w-[230px] flex items-center gap-2">
-                  <label className="text-[11px] font-medium uppercase tracking-wide text-gray-500 whitespace-nowrap">Área cliente</label>
-                  <select
-                    value={portalFilter}
-                    onChange={(e) => setPortalFilter(e.target.value as 'todos' | 'com' | 'sem')}
-                    className="flex-1 px-2.5 py-1.5 bg-netflix-panel border border-netflix-border rounded-lg text-xs text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
-                  >
-                    <option value="todos">Todos</option>
-                    <option value="com">Ativo</option>
-                    <option value="sem">Desativo</option>
-                  </select>
-                </div>
-              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setClientsLoading(true)
+                  api
+                    .get<ClientAccessRow[]>('/api/clients?includePortalPin=1')
+                    .then(setClients)
+                    .catch((e) => showError(e instanceof Error ? e.message : 'Erro ao carregar clientes'))
+                    .finally(() => setClientsLoading(false))
+                }}
+                className="p-2 rounded-lg border border-netflix-border bg-netflix-panel hover:bg-netflix-hover text-gray-300 hover:text-white transition-colors"
+                title="Atualizar lista"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
             </div>
             <div className="bg-netflix-card/80 rounded-xl border border-netflix-border/80 shadow-lg shadow-black/40 overflow-hidden">
               <table className="min-w-full divide-y divide-netflix-border/80">
@@ -703,7 +1172,9 @@ export default function Utilizadores() {
                     pagedClients.map((c) => (
                       <tr key={c.id} className="hover:bg-netflix-hover/80 transition-colors">
                         <td className="px-4 py-3 text-sm text-white font-medium">{c.nome}</td>
-                        <td className="px-4 py-3 text-sm text-gray-300 font-mono">{c.whatsapp || '—'}</td>
+                        <td className="px-4 py-3">
+                          <RoveWhatsappLink value={c.whatsapp} />
+                        </td>
                         <td className="px-4 py-3 text-sm text-gray-300">{SERVICO_LABEL[c.servico] ?? c.servico}</td>
                         <td className="px-4 py-3">
                           <span
@@ -731,45 +1202,8 @@ export default function Utilizadores() {
                             </span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-300">
-                          {c.areaClienteAtiva ? (
-                            <div className="flex items-start gap-2 min-w-0 max-w-md">
-                              <div className="min-w-0 flex-1">
-                                {!revealPinIds.has(c.id) ? (
-                                  <span className="font-mono">••••••</span>
-                                ) : c.portalPinPlain ? (
-                                  <span className="font-mono">{c.portalPinPlain}</span>
-                                ) : (
-                                  <p className="text-xs text-gray-400 font-sans font-normal leading-snug m-0">
-                                    Ainda não há PIN em texto no sistema (p.ex. registo antigo). Use o botão
-                                    «PIN» para redefinir e voltar a ver o valor aqui.
-                                  </p>
-                                )}
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setRevealPinIds((prev) => {
-                                    const n = new Set(prev)
-                                    if (n.has(c.id)) n.delete(c.id)
-                                    else n.add(c.id)
-                                    return n
-                                  })
-                                }}
-                                className="shrink-0 inline-flex items-center justify-center h-8 w-8 rounded-lg border border-netflix-border/80 text-gray-400 hover:text-white hover:border-primary-500/50 hover:bg-primary-500/10"
-                                title={revealPinIds.has(c.id) ? 'Ocultar' : 'Ver PIN ou informação'}
-                                aria-label={revealPinIds.has(c.id) ? 'Ocultar' : 'Ver PIN ou informação'}
-                              >
-                                {revealPinIds.has(c.id) ? (
-                                  <EyeOff className="w-4 h-4" />
-                                ) : (
-                                  <Eye className="w-4 h-4" />
-                                )}
-                              </button>
-                            </div>
-                          ) : (
-                            '—'
-                          )}
+                        <td className="px-4 py-3 text-sm text-gray-300 font-mono">
+                          {renderClientPortalPin(c, showPins)}
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1 flex-wrap">
@@ -811,7 +1245,7 @@ export default function Utilizadores() {
 
       {/* Modal confirmar suspender utilizador */}
       {userToSuspender && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <RoveModalOverlay>
           <div className="bg-netflix-card rounded-2xl shadow-2xl border border-amber-500/40 max-w-sm w-full overflow-hidden">
             <div className="p-6 border-b border-netflix-border/80">
               <div className="flex items-center gap-3">
@@ -848,12 +1282,12 @@ export default function Utilizadores() {
               </button>
             </div>
           </div>
-        </div>
+        </RoveModalOverlay>
       )}
 
       {/* Modal confirmar ativar utilizador */}
       {userToAtivar && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <RoveModalOverlay>
           <div className="bg-netflix-card rounded-2xl shadow-2xl border border-green-500/40 max-w-sm w-full overflow-hidden">
             <div className="p-6 border-b border-netflix-border/80">
               <div className="flex items-center gap-3">
@@ -890,12 +1324,12 @@ export default function Utilizadores() {
               </button>
             </div>
           </div>
-        </div>
+        </RoveModalOverlay>
       )}
 
       {/* Modal confirmar eliminar utilizador */}
       {userToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <RoveModalOverlay>
           <div className="bg-netflix-card rounded-2xl shadow-2xl border border-red-500/40 max-w-sm w-full overflow-hidden">
             <div className="p-6 border-b border-netflix-border/80">
               <div className="flex items-center gap-3">
@@ -932,12 +1366,12 @@ export default function Utilizadores() {
               </button>
             </div>
           </div>
-        </div>
+        </RoveModalOverlay>
       )}
 
       {/* Modal redefinir senha */}
       {userToResetPassword && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <RoveModalOverlay>
           <div className="bg-netflix-card rounded-2xl shadow-2xl border border-netflix-border max-w-sm w-full overflow-hidden">
             <div className="p-6 border-b border-netflix-border/80">
               <div className="flex items-center gap-3">
@@ -991,11 +1425,11 @@ export default function Utilizadores() {
               </button>
             </div>
           </div>
-        </div>
+        </RoveModalOverlay>
       )}
 
       {clientForPin && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <RoveModalOverlay>
           <div className="bg-netflix-card rounded-2xl shadow-2xl border border-primary-500/40 max-w-sm w-full overflow-hidden">
             <div className="p-6 border-b border-netflix-border/80">
               <div className="flex items-center gap-3">
@@ -1057,11 +1491,11 @@ export default function Utilizadores() {
               </button>
             </div>
           </div>
-        </div>
+        </RoveModalOverlay>
       )}
 
       {clientToRevoke && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <RoveModalOverlay>
           <div className="bg-netflix-card rounded-2xl shadow-2xl border border-amber-500/40 max-w-sm w-full overflow-hidden">
             <div className="p-6 border-b border-netflix-border/80">
               <div className="flex items-center gap-3">
@@ -1098,135 +1532,194 @@ export default function Utilizadores() {
               </button>
             </div>
           </div>
-        </div>
+        </RoveModalOverlay>
       )}
 
-      {modal === 'create' && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-netflix-card rounded-xl shadow-xl border border-netflix-border max-w-md w-full p-6">
-            <h2 className="text-lg font-semibold text-white mb-4">Novo utilizador</h2>
-            <form onSubmit={handleCreate}>
-              <div className="space-y-3">
-                <label className="block text-sm font-medium text-gray-300">Nome</label>
-                <input
-                  type="text"
-                  value={form.nome}
-                  onChange={(e) => setForm((f) => ({ ...f, nome: e.target.value }))}
-                  className="w-full bg-netflix-panel border border-netflix-border rounded-lg px-3 py-2 text-white"
-                  required
-                />
-                <label className="block text-sm font-medium text-gray-300">Email</label>
-                <input
-                  type="email"
-                  value={form.email}
-                  onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                  className="w-full bg-netflix-panel border border-netflix-border rounded-lg px-3 py-2 text-white"
-                  required
-                />
-                <label className="block text-sm font-medium text-gray-300">WhatsApp <span className="text-gray-500">(opcional)</span></label>
-                <input
-                  type="text"
-                  value={form.whatsapp}
-                  onChange={(e) => setForm((f) => ({ ...f, whatsapp: e.target.value }))}
-                  placeholder="ex: +351 912 345 678"
-                  className="w-full bg-netflix-panel border border-netflix-border rounded-lg px-3 py-2 text-white"
-                />
-                <label className="block text-sm font-medium text-gray-300">Senha</label>
-                <input
-                  type="password"
-                  value={form.password}
-                  onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                  className="w-full bg-netflix-panel border border-netflix-border rounded-lg px-3 py-2 text-white"
-                  required
-                />
-                <label className="block text-sm font-medium text-gray-300">Perfil</label>
-                <select
-                  value={form.role}
-                  onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
-                  className="w-full bg-netflix-panel border border-netflix-border rounded-lg px-3 py-2 text-white"
-                >
-                  {ROLES_OPERADORES.map((r) => (
-                    <option key={r.value} value={r.value}>
-                      {r.label}
-                    </option>
-                  ))}
-                </select>
+      {userForAlerts && (
+        <RoveModalOverlay>
+          <div className="bg-netflix-card rounded-xl shadow-2xl border border-violet-500/30 max-w-lg w-full overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="border-b border-netflix-border/80 shrink-0 p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-violet-500/20 text-violet-400 shrink-0">
+                  <Bell className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-white">Alertas WhatsApp</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">{userForAlerts.nome}</p>
+                </div>
               </div>
-              <div className="mt-6 flex justify-end gap-2">
-                <button type="button" onClick={closeModal} className="px-4 py-2 text-gray-300 hover:bg-netflix-hover rounded-lg">
+            </div>
+            <div className="p-4 overflow-y-auto flex-1">
+              <AlertScopesEditor
+                role={userForAlerts.role}
+                value={alertsForm}
+                onChange={setAlertsForm}
+              />
+            </div>
+            <div className="flex gap-2 p-4 border-t border-netflix-border/80 shrink-0">
+              <button
+                type="button"
+                onClick={() => setUserForAlerts(null)}
+                className="py-1.5 px-3 border border-netflix-border rounded-lg text-xs font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmarAlertas}
+                disabled={submitLoading}
+                className="flex-1 py-1.5 px-3 bg-violet-600 text-white rounded-lg text-xs font-medium hover:bg-violet-700 disabled:opacity-50 transition-colors"
+              >
+                {submitLoading ? 'A guardar…' : 'Guardar alertas'}
+              </button>
+            </div>
+          </div>
+        </RoveModalOverlay>
+      )}
+
+      {modal && (
+        <RoveModalOverlay>
+          <div className="bg-netflix-card rounded-xl shadow-2xl border border-netflix-border/80 max-w-lg w-full overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="border-b border-netflix-border/80 shrink-0 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className="p-2 rounded-lg bg-primary-600/20 text-primary-400 shrink-0">
+                    <UserCog className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-lg font-semibold text-white">
+                      {modal === 'create' ? 'Novo utilizador' : 'Editar utilizador'}
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {modal === 'create'
+                        ? 'Operador com acesso ao painel administrativo'
+                        : editing?.nome}
+                    </p>
+                    <div className="h-0.5 w-10 bg-primary-500 rounded-full mt-2" />
+                  </div>
+                </div>
+                <div className="w-32 shrink-0 sm:w-36">
+                  <RoveFormLabel required>Perfil</RoveFormLabel>
+                  <RoveSelect
+                    compact
+                    required
+                    value={form.role}
+                    onChange={(e) => {
+                      const role = e.target.value
+                      setForm((f) => ({
+                        ...f,
+                        role,
+                        alerts:
+                          f.alerts.mode === 'role_default'
+                            ? { mode: 'role_default', scopes: defaultAlertScopesForRole(role) }
+                            : f.alerts,
+                      }))
+                    }}
+                  >
+                    {ROLES_OPERADORES.map((r) => (
+                      <option key={r.value} value={r.value}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </RoveSelect>
+                </div>
+              </div>
+            </div>
+
+            <form onSubmit={modal === 'create' ? handleCreate : handleEdit} className="flex flex-col min-h-0 flex-1">
+              <div className="p-4 space-y-3 overflow-y-auto flex-1">
+                <p className="text-[10px] text-gray-500 pb-0.5">
+                  Campos com <span className="text-primary-400">*</span> são obrigatórios.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <RoveFormLabel required>Nome</RoveFormLabel>
+                    <input
+                      type="text"
+                      required
+                      value={form.nome}
+                      onChange={(e) => setForm((f) => ({ ...f, nome: e.target.value }))}
+                      placeholder="Nome completo"
+                      className={ROVE_FORM_INPUT_SM}
+                    />
+                  </div>
+                  <div>
+                    <RoveFormLabel required>Email</RoveFormLabel>
+                    <input
+                      type="email"
+                      required
+                      autoComplete="email"
+                      value={form.email}
+                      onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                      placeholder="email@exemplo.com"
+                      className={ROVE_FORM_INPUT_SM}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <RoveFormLabel>WhatsApp</RoveFormLabel>
+                  <WhatsappAoInput
+                    compact
+                    value={form.whatsapp}
+                    onChange={(whatsapp) => setForm((f) => ({ ...f, whatsapp }))}
+                  />
+                  <p className="text-[10px] text-gray-600 mt-1">
+                    Necessário para receber alertas no telemóvel.
+                  </p>
+                </div>
+
+                <AlertScopesEditor
+                  role={form.role}
+                  value={form.alerts}
+                  onChange={(alerts) => setForm((f) => ({ ...f, alerts }))}
+                />
+
+                {modal === 'create' ? (
+                  <div className="border-t border-netflix-border/60 pt-3">
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500 mb-2.5">
+                      Acesso ao painel
+                    </p>
+                    <div>
+                      <RoveFormLabel required>Senha</RoveFormLabel>
+                      <input
+                        type="password"
+                        required
+                        autoComplete="new-password"
+                        value={form.password}
+                        onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                        placeholder="Mín. 6 caracteres"
+                        className={ROVE_FORM_INPUT_SM}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-gray-500 border-t border-netflix-border/60 pt-3">
+                    Para alterar a senha, use a ação &quot;Redefinir senha&quot; na tabela.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex gap-2 p-4 pt-2 border-t border-netflix-border/80 shrink-0">
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  className="py-1.5 px-3 border border-netflix-border rounded-lg text-xs font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
+                >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={submitLoading}
-                  className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50"
+                  className="flex-1 py-1.5 px-3 bg-primary-600 text-white rounded-lg text-xs font-medium hover:bg-primary-700 disabled:opacity-50 transition-colors shadow-lg shadow-primary-900/30"
                 >
-                  {submitLoading ? 'A guardar…' : 'Criar'}
+                  {submitLoading ? 'A guardar…' : modal === 'create' ? 'Criar utilizador' : 'Guardar'}
                 </button>
               </div>
             </form>
           </div>
-        </div>
-      )}
-
-      {modal === 'edit' && editing && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-netflix-card rounded-xl shadow-xl border border-netflix-border max-w-md w-full p-6">
-            <h2 className="text-lg font-semibold text-white mb-4">Editar utilizador</h2>
-            <form onSubmit={handleEdit}>
-              <div className="space-y-3">
-                <label className="block text-sm font-medium text-gray-300">Nome</label>
-                <input
-                  type="text"
-                  value={form.nome}
-                  onChange={(e) => setForm((f) => ({ ...f, nome: e.target.value }))}
-                  className="w-full bg-netflix-panel border border-netflix-border rounded-lg px-3 py-2 text-white"
-                  required
-                />
-                <label className="block text-sm font-medium text-gray-300">Email</label>
-                <input
-                  type="email"
-                  value={form.email}
-                  onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                  className="w-full bg-netflix-panel border border-netflix-border rounded-lg px-3 py-2 text-white"
-                  required
-                />
-                <label className="block text-sm font-medium text-gray-300">WhatsApp <span className="text-gray-500">(opcional)</span></label>
-                <input
-                  type="text"
-                  value={form.whatsapp}
-                  onChange={(e) => setForm((f) => ({ ...f, whatsapp: e.target.value }))}
-                  placeholder="ex: +351 912 345 678"
-                  className="w-full bg-netflix-panel border border-netflix-border rounded-lg px-3 py-2 text-white"
-                />
-                <label className="block text-sm font-medium text-gray-300">Perfil</label>
-                <select
-                  value={form.role}
-                  onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
-                  className="w-full bg-netflix-panel border border-netflix-border rounded-lg px-3 py-2 text-white"
-                >
-                  {ROLES_OPERADORES.map((r) => (
-                    <option key={r.value} value={r.value}>
-                      {r.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="mt-6 flex justify-end gap-2">
-                <button type="button" onClick={closeModal} className="px-4 py-2 text-gray-300 hover:bg-netflix-hover rounded-lg">
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitLoading}
-                  className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50"
-                >
-                  {submitLoading ? 'A guardar…' : 'Guardar'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        </RoveModalOverlay>
       )}
     </div>
   )

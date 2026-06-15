@@ -16,8 +16,9 @@ model User {
   email     String   @unique
   whatsapp  String?  // contacto WhatsApp (opcional)
   password  String   // hash bcrypt
-  role      String   @default("geral") // admin | geral | netflix | iptv (suporte = geral)
-  status    String   @default("ativo") // ativo | suspenso
+  role        String   @default("geral") // admin | geral | netflix | iptv | financeiro (suporte = geral)
+  status      String   @default("ativo") // ativo | suspenso
+  alertScopes String?  @map("alert_scopes") // JSON: categorias WhatsApp (null = padrão do perfil)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -135,7 +136,7 @@ model Indicacao {
 model AuditLog {
   id         Int      @id @default(autoincrement())
   userId     Int      @map("user_id")
-  user       User     @relation(fields: [userId], references: [id])
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   action     String   // create_client | update_client | renew | suspend | delete_client | etc.
   entity     String   // client | servidor | indicacao | user
   entityId   Int?     @map("entity_id")

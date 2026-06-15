@@ -1,10 +1,14 @@
 import { prisma } from './prisma.js'
 
+let portalPinPlainColumnReady = false
+
 export async function ensurePortalPinPlainColumn(): Promise<void> {
+  if (portalPinPlainColumnReady) return
   await prisma.$executeRawUnsafe(`
     ALTER TABLE clients
     ADD COLUMN IF NOT EXISTS portal_pin_plain TEXT
   `)
+  portalPinPlainColumnReady = true
 }
 
 export async function setPortalPinPlainInDb(clientId: number, plain: string | null): Promise<void> {

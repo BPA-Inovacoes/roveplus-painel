@@ -1,6 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { RoveModalOverlay } from '../components/RoveModalOverlay'
 import { motion } from 'framer-motion'
-import { Plus, Edit2, Trash2, LayoutGrid, AlertTriangle, CheckCircle, Eye, EyeOff, RefreshCw } from 'lucide-react'
+import { Plus, Edit2, Trash2, LayoutGrid, AlertTriangle, CheckCircle, Eye, EyeOff, RefreshCw, Search } from 'lucide-react'
+import { RoveDatePicker } from '../components/RoveDatePicker'
+import { RoveSelect } from '../components/RoveSelect'
+import { ROVE_FORM_INPUT_SM, RoveFormLabel } from '../components/roveFormUi'
 import { api } from '../api/client'
 import { useAlert } from '../contexts/AlertContext'
 import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
@@ -23,13 +27,14 @@ export default function Salas() {
   const [modal, setModal] = useState<'new' | 'edit' | null>(null)
   const [salaSuspender, setSalaSuspender] = useState<Sala | null>(null)
   const [salaAtivar, setSalaAtivar] = useState<Sala | null>(null)
+  const [salaToRenovar, setSalaToRenovar] = useState<Sala | null>(null)
+  const [salaToDelete, setSalaToDelete] = useState<Sala | null>(null)
   const [showSenha, setShowSenha] = useState(false)
   const [tablePage, setTablePage] = useState(1)
+  const [filter, setFilter] = useState({ status: '', vencendo: '' })
+  const [search, setSearch] = useState('')
+  const [searchDebounced, setSearchDebounced] = useState('')
   const [form, setForm] = useState<Partial<Sala>>({ nome: '', email: '', senha: '', observacoes: '', dataFim: '' })
-
-  const totalTablePages = Math.max(1, Math.ceil(list.length / ROWS_PER_PAGE))
-  const tablePageClamped = Math.min(tablePage, totalTablePages)
-  const pagedList = list.slice((tablePageClamped - 1) * ROWS_PER_PAGE, tablePageClamped * ROWS_PER_PAGE)
 
   function daysUntilSala(dateStr: string | null): number | null {
     if (!dateStr) return null
@@ -39,6 +44,25 @@ export default function Salas() {
     today.setHours(0, 0, 0, 0)
     return Math.ceil((d.getTime() - today.getTime()) / (24 * 60 * 60 * 1000))
   }
+
+  const filteredList = useMemo(() => {
+    const q = searchDebounced.trim().toLowerCase()
+    return list.filter((s) => {
+      if (filter.status && (s.status || 'ativo') !== filter.status) return false
+      const days = daysUntilSala(s.dataFim)
+      if (filter.vencendo === 'hoje' && (days !== 0 || (s.status || 'ativo') !== 'ativo')) return false
+      if (filter.vencendo === '3dias' && (days === null || days < 0 || days > 3 || (s.status || 'ativo') !== 'ativo')) return false
+      if (filter.vencendo === '7dias' && (days === null || days < 0 || days > 7 || (s.status || 'ativo') !== 'ativo')) return false
+      if (filter.vencendo === 'vencidas' && !(days !== null && days < 0 && (s.status || 'ativo') === 'ativo')) return false
+      if (!q) return true
+      const hay = [s.nome, s.email, s.observacoes].filter(Boolean).join(' ').toLowerCase()
+      return hay.includes(q)
+    })
+  }, [list, filter, searchDebounced])
+
+  const totalTablePages = Math.max(1, Math.ceil(filteredList.length / ROWS_PER_PAGE))
+  const tablePageClamped = Math.min(tablePage, totalTablePages)
+  const pagedList = filteredList.slice((tablePageClamped - 1) * ROWS_PER_PAGE, tablePageClamped * ROWS_PER_PAGE)
 
   function load() {
     setLoading(true)
@@ -52,6 +76,15 @@ export default function Salas() {
   useEffect(() => {
     load()
   }, [])
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setSearchDebounced(search), 300)
+    return () => window.clearTimeout(t)
+  }, [search])
+
+  useEffect(() => {
+    setTablePage(1)
+  }, [filter, searchDebounced])
 
   async function save() {
     if (!form.nome || !form.nome.trim()) {
@@ -108,20 +141,23 @@ export default function Salas() {
     }
   }
 
-  async function remove(id: number) {
-    if (!confirm('Excluir sala? Os clientes vinculados ficarão sem sala atribuída.')) return
+  async function confirmarExcluir() {
+    if (!salaToDelete) return
     try {
-      await api.delete(`/api/salas/${id}`)
+      await api.delete(`/api/salas/${salaToDelete.id}`)
+      setSalaToDelete(null)
       load()
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Erro')
     }
   }
 
-  async function pagarMes(sala: Sala) {
+  async function confirmarRenovar() {
+    if (!salaToRenovar) return
     try {
-      await api.post(`/api/salas/${sala.id}/pagar-mes`, {})
-      showInfo('Sala renovada por mais 1 mês.')
+      await api.post(`/api/salas/${salaToRenovar.id}/pagar-mes`, {})
+      setSalaToRenovar(null)
+      showInfo(`Sala "${salaToRenovar.nome}" renovada por mais 1 mês.`)
       load()
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Erro ao renovar sala')
@@ -149,6 +185,55 @@ export default function Salas() {
         >
           <Plus className="w-4 h-4" />
           Nova sala
+        </button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 p-4 rounded-xl bg-netflix-card/60 border border-netflix-border/80">
+        <div className="w-40 min-w-[10rem]">
+          <RoveSelect
+            compact
+            value={filter.status}
+            onChange={(e) => setFilter((f) => ({ ...f, status: e.target.value }))}
+            placeholder="Todos os estados"
+            title="Filtrar por estado"
+          >
+            <option value="">Todos os estados</option>
+            <option value="ativo">Ativo</option>
+            <option value="suspenso">Suspenso</option>
+          </RoveSelect>
+        </div>
+        <div className="w-44 min-w-[11rem]">
+          <RoveSelect
+            compact
+            value={filter.vencendo}
+            onChange={(e) => setFilter((f) => ({ ...f, vencendo: e.target.value }))}
+            placeholder="Qualquer validade"
+            title="Filtrar por validade"
+          >
+            <option value="">Qualquer validade</option>
+            <option value="hoje">Vence hoje</option>
+            <option value="3dias">Vence em 3 dias</option>
+            <option value="7dias">Vence em 7 dias</option>
+            <option value="vencidas">Vencidas</option>
+          </RoveSelect>
+        </div>
+        <div className="relative flex-1 min-w-[180px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+          <input
+            type="text"
+            placeholder="Nome, email, observações..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full min-h-[32px] pl-10 pr-3 py-1.5 rounded-lg border border-netflix-border bg-netflix-panel text-white placeholder-gray-500 text-xs focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500/50 outline-none transition-colors"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => load()}
+          className="p-2 rounded-lg border border-netflix-border bg-netflix-panel hover:bg-netflix-hover text-gray-300 hover:text-white transition-colors"
+          title="Atualizar lista"
+        >
+          <RefreshCw className="w-4 h-4" />
         </button>
       </div>
 
@@ -229,8 +314,8 @@ export default function Salas() {
                       <div className="flex justify-end gap-1">
                         <button
                           type="button"
-                          onClick={() => pagarMes(s)}
-                          title="Pagar +1 mês"
+                          onClick={() => setSalaToRenovar(s)}
+                          title="Renovar (+1 mês)"
                           className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-emerald-500/60 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/30 hover:text-white shadow-sm shadow-emerald-900/40 transition-colors"
                         >
                           <RefreshCw className="w-4 h-4" />
@@ -276,7 +361,7 @@ export default function Salas() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => remove(s.id)}
+                          onClick={() => setSalaToDelete(s)}
                           title="Excluir"
                           className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-red-500/60 bg-red-500/15 text-red-300 hover:bg-red-500/30 hover:text-white shadow-sm shadow-red-900/40 transition-colors"
                         >
@@ -290,17 +375,133 @@ export default function Salas() {
               </tbody>
             </table>
           </div>
-          <TablePagination totalItems={list.length} currentPage={tablePageClamped} onPageChange={setTablePage} />
+          <TablePagination totalItems={filteredList.length} currentPage={tablePageClamped} onPageChange={setTablePage} />
           </>
         )}
-        {!loading && list.length === 0 && (
-          <div className="p-8 text-center text-gray-400">Nenhuma sala. Crie uma para atribuir a clientes do Plano Room.</div>
+        {!loading && filteredList.length === 0 && (
+          <div className="p-8 text-center text-gray-400">
+            {list.length === 0
+              ? 'Nenhuma sala. Crie uma para atribuir a clientes do Plano Room.'
+              : 'Nenhuma sala corresponde aos filtros.'}
+          </div>
         )}
       </div>
 
+      {salaToDelete && (
+        <RoveModalOverlay>
+          <div className="bg-netflix-card rounded-2xl shadow-2xl border border-red-500/40 max-w-sm w-full overflow-hidden">
+            <div className="p-6 border-b border-netflix-border/80">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-red-500/20 text-red-400 ring-1 ring-red-500/30">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold text-white">Excluir sala</h3>
+                  <div className="h-1 w-12 bg-red-500 rounded-full mt-2" />
+                </div>
+              </div>
+            </div>
+            <div className="p-6 space-y-2">
+              <p className="text-sm text-gray-300">
+                Tem a certeza que deseja excluir a sala{' '}
+                <span className="font-medium text-white">{salaToDelete.nome}</span>?
+              </p>
+              <p className="text-xs text-gray-500">
+                Os clientes vinculados ficarão sem sala atribuída. Esta ação não pode ser desfeita.
+              </p>
+              {salaToDelete.totalClientes > 0 && (
+                <p className="text-xs text-amber-400/90">
+                  Atenção: <span className="font-semibold">{salaToDelete.totalClientes}</span>{' '}
+                  {salaToDelete.totalClientes === 1 ? 'cliente está' : 'clientes estão'} associados a esta sala.
+                </p>
+              )}
+            </div>
+            <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80">
+              <button
+                type="button"
+                onClick={() => setSalaToDelete(null)}
+                className="flex-1 py-2.5 px-4 border border-netflix-border rounded-xl text-sm font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmarExcluir}
+                className="flex-1 py-2.5 px-4 bg-red-600 text-white rounded-xl text-sm font-medium hover:bg-red-700 transition-colors shadow-lg shadow-red-900/30"
+              >
+                Excluir
+              </button>
+            </div>
+          </div>
+        </RoveModalOverlay>
+      )}
+
+      {salaToRenovar && (
+        <RoveModalOverlay>
+          <div className="bg-netflix-card rounded-2xl shadow-2xl border border-emerald-500/40 max-w-sm w-full overflow-hidden">
+            <div className="p-6 border-b border-netflix-border/80">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/30">
+                  <RefreshCw className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold text-white">Renovar sala</h3>
+                  <p className="text-sm text-gray-400 mt-0.5">
+                    <span className="text-white font-medium">{salaToRenovar.nome}</span>
+                  </p>
+                  <div className="h-1 w-12 bg-emerald-500 rounded-full mt-2" />
+                </div>
+              </div>
+            </div>
+            <div className="p-6 space-y-2">
+              <p className="text-sm text-gray-300">
+                Tem a certeza que deseja renovar esta sala por mais{' '}
+                <span className="font-medium text-white">1 mês</span>?
+              </p>
+              <p className="text-xs text-gray-500">
+                A data fim da sala será prolongada
+                {salaToRenovar.dataFim && (
+                  <>
+                    {' '}
+                    (atual:{' '}
+                    <span className="text-gray-400">
+                      {new Date(salaToRenovar.dataFim).toLocaleDateString('pt-PT')}
+                    </span>
+                    )
+                  </>
+                )}
+                . Os clientes do Plano Room nesta sala terão a mesma data fim atualizada.
+              </p>
+              {salaToRenovar.totalClientes > 0 && (
+                <p className="text-xs text-gray-500">
+                  Clientes afetados:{' '}
+                  <span className="font-medium text-gray-300">{salaToRenovar.totalClientes}</span>
+                </p>
+              )}
+            </div>
+            <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80">
+              <button
+                type="button"
+                onClick={() => setSalaToRenovar(null)}
+                className="flex-1 py-2.5 px-4 border border-netflix-border rounded-xl text-sm font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmarRenovar}
+                className="flex-1 py-2.5 px-4 bg-emerald-600 text-white rounded-xl text-sm font-medium hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-900/30"
+              >
+                Renovar
+              </button>
+            </div>
+          </div>
+        </RoveModalOverlay>
+      )}
+
       {/* Modal confirmar suspender sala */}
       {salaSuspender && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <RoveModalOverlay>
           <div className="bg-netflix-card rounded-2xl shadow-2xl border border-amber-500/40 max-w-sm w-full overflow-hidden">
             <div className="p-6 border-b border-netflix-border/80">
               <div className="flex items-center gap-3">
@@ -336,12 +537,12 @@ export default function Salas() {
               </button>
             </div>
           </div>
-        </div>
+        </RoveModalOverlay>
       )}
 
       {/* Modal confirmar ativar sala */}
       {salaAtivar && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <RoveModalOverlay>
           <div className="bg-netflix-card rounded-2xl shadow-2xl border border-green-500/40 max-w-sm w-full overflow-hidden">
             <div className="p-6 border-b border-netflix-border/80">
               <div className="flex items-center gap-3">
@@ -377,118 +578,143 @@ export default function Salas() {
               </button>
             </div>
           </div>
-        </div>
+        </RoveModalOverlay>
       )}
 
       {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-netflix-card rounded-2xl shadow-2xl border border-netflix-border max-w-sm w-full overflow-hidden">
-            <div className="p-6 border-b border-netflix-border/80">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-primary-500/20 text-primary-400 ring-1 ring-primary-500/30">
-                  <LayoutGrid className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-semibold text-white">
+        <RoveModalOverlay>
+          <div className="bg-netflix-card rounded-xl shadow-2xl border border-netflix-border max-w-lg w-full">
+            <div className="border-b border-netflix-border/80 shrink-0 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-lg font-semibold text-white">
                     {modal === 'new' ? 'Nova sala' : 'Editar sala'}
                   </h3>
-                  <div className="h-1 w-12 bg-primary-500 rounded-full mt-2" />
+                  <div className="h-0.5 w-10 bg-primary-500 rounded-full mt-2" />
                 </div>
+                {modal === 'edit' && (
+                  <div className="w-32 shrink-0 sm:w-36">
+                    <RoveFormLabel required>Estado</RoveFormLabel>
+                    <RoveSelect
+                      compact
+                      required
+                      value={form.status || 'ativo'}
+                      onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
+                    >
+                      <option value="ativo">Ativo</option>
+                      <option value="suspenso">Suspenso</option>
+                    </RoveSelect>
+                  </div>
+                )}
               </div>
             </div>
-            <div className="p-6 space-y-4">
+
+            <div className="p-4 space-y-3">
+              <p className="text-[10px] text-gray-500 pb-0.5">
+                Campos com <span className="text-primary-400">*</span> são obrigatórios.
+              </p>
+
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-0.5">Nome</label>
+                <RoveFormLabel required>Nome</RoveFormLabel>
                 <input
                   type="text"
+                  required
                   value={form.nome || ''}
                   onChange={(e) => setForm((f) => ({ ...f, nome: e.target.value }))}
                   placeholder="Ex: Sala 1, Conta A"
-                  className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-xl text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none transition-colors"
+                  className={ROVE_FORM_INPUT_SM}
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-0.5">Email</label>
-                <input
-                  type="email"
-                  value={form.email || ''}
-                  onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                  placeholder="email@exemplo.com"
-                  className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-xl text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none transition-colors"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-0.5">Senha</label>
-                <div className="relative">
-                  <input
-                    type={showSenha ? 'text' : 'password'}
-                    value={form.senha || ''}
-                    onChange={(e) => setForm((f) => ({ ...f, senha: e.target.value }))}
-                    placeholder="••••••••"
-                    autoComplete={modal === 'new' ? 'new-password' : 'current-password'}
-                    className="w-full px-3 py-2 pr-10 bg-netflix-panel border border-netflix-border rounded-xl text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none transition-colors"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowSenha((v) => !v)}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
-                    title={showSenha ? 'Ocultar senha' : 'Ver senha'}
-                  >
-                    {showSenha ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
+
+              <div className="border-t border-netflix-border/60 pt-3">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500 mb-2.5">
+                  Conta & acesso
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <RoveFormLabel>Email</RoveFormLabel>
+                    <input
+                      type="email"
+                      value={form.email || ''}
+                      onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                      placeholder="email@exemplo.com"
+                      className={ROVE_FORM_INPUT_SM}
+                    />
+                  </div>
+                  <div>
+                    <RoveFormLabel>Senha</RoveFormLabel>
+                    <div className="relative">
+                      <input
+                        type={showSenha ? 'text' : 'password'}
+                        value={form.senha || ''}
+                        onChange={(e) => setForm((f) => ({ ...f, senha: e.target.value }))}
+                        placeholder="••••••••"
+                        autoComplete={modal === 'new' ? 'new-password' : 'current-password'}
+                        className={`${ROVE_FORM_INPUT_SM} pr-9`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowSenha((v) => !v)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-0.5 text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
+                        title={showSenha ? 'Ocultar senha' : 'Ver senha'}
+                      >
+                        {showSenha ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-0.5">Data fim (partilhada pelos 4 usuários)</label>
-                <input
-                  type="date"
-                  value={form.dataFim ? String(form.dataFim).slice(0, 10) : ''}
-                  onChange={(e) => setForm((f) => ({ ...f, dataFim: e.target.value }))}
-                  className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-xl text-sm text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none transition-colors"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-0.5">Observações</label>
-                <input
-                  type="text"
-                  value={form.observacoes || ''}
-                  onChange={(e) => setForm((f) => ({ ...f, observacoes: e.target.value }))}
-                  placeholder="Opcional"
-                  className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-xl text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none transition-colors"
-                />
-              </div>
-              {modal === 'edit' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-0.5">Estado</label>
-                  <select
-                    value={form.status || 'ativo'}
-                    onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
-                    className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-xl text-sm text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none transition-colors"
-                  >
-                    <option value="ativo">Ativo</option>
-                    <option value="suspenso">Suspenso</option>
-                  </select>
+
+              <div className="border-t border-netflix-border/60 pt-3">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500 mb-2.5">
+                  Validade & notas
+                </p>
+                <div className="space-y-3">
+                  <div>
+                    <RoveFormLabel>Data fim (partilhada pelos 4 utilizadores)</RoveFormLabel>
+                    <RoveDatePicker
+                      compact
+                      value={form.dataFim ? String(form.dataFim).slice(0, 10) : ''}
+                      onChange={(dataFim) => setForm((f) => ({ ...f, dataFim }))}
+                      placeholder="Selecionar data"
+                      title="Data de validade da sala"
+                    />
+                  </div>
+                  <div>
+                    <RoveFormLabel>Observações</RoveFormLabel>
+                    <textarea
+                      value={form.observacoes || ''}
+                      onChange={(e) => setForm((f) => ({ ...f, observacoes: e.target.value }))}
+                      placeholder="Opcional"
+                      rows={2}
+                      className={`${ROVE_FORM_INPUT_SM} min-h-[4.5rem] resize-none`}
+                    />
+                  </div>
                 </div>
-              )}
+              </div>
             </div>
-            <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80 bg-netflix-panel/30">
+
+            <div className="flex gap-2 p-4 pt-2 border-t border-netflix-border/80 shrink-0">
               <button
                 type="button"
-                onClick={() => { setModal(null); setShowSenha(false) }}
-                className="flex-1 py-2.5 px-4 border border-netflix-border rounded-xl text-sm font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
+                onClick={() => {
+                  setModal(null)
+                  setShowSenha(false)
+                }}
+                className="py-1.5 px-3 border border-netflix-border rounded-lg text-xs font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
               >
                 Cancelar
               </button>
               <button
                 type="button"
                 onClick={save}
-                className="flex-1 py-2.5 px-4 bg-primary-600 text-white rounded-xl text-sm font-medium hover:bg-primary-700 transition-colors shadow-lg shadow-primary-900/30"
+                className="flex-1 py-1.5 px-3 bg-primary-600 text-white rounded-lg text-xs font-medium hover:bg-primary-700 transition-colors shadow-lg shadow-primary-900/30"
               >
                 Guardar
               </button>
             </div>
           </div>
-        </div>
+        </RoveModalOverlay>
       )}
     </motion.div>
   )

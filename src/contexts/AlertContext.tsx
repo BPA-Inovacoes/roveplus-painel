@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
+import { RoveModalOverlay } from '../components/RoveModalOverlay'
 import { AlertCircle, AlertTriangle, Info } from 'lucide-react'
 
 type AlertVariant = 'error' | 'warning' | 'info'
@@ -58,7 +59,7 @@ export function AlertProvider({ children }: { children: ReactNode }) {
     <AlertContext.Provider value={value}>
       {children}
       {state.open && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <RoveModalOverlay zIndex={100}>
           <div
             className={`rounded-2xl shadow-2xl border bg-netflix-card max-w-md w-full overflow-hidden ${variantStyles[state.variant].border}`}
           >
@@ -83,7 +84,7 @@ export function AlertProvider({ children }: { children: ReactNode }) {
               </div>
             </div>
           </div>
-        </div>
+        </RoveModalOverlay>
       )}
     </AlertContext.Provider>
   )

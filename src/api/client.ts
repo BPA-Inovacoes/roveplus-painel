@@ -1,23 +1,35 @@
+import { isClientLoginPath, isPanelLoginPath } from '../lib/publicRoutes'
+
 const BASE = import.meta.env.VITE_API_URL || ''
 
 async function request<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    ...options,
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-  })
+  let res: Response
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      ...options,
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    })
+  } catch {
+    const hint = BASE
+      ? `Não foi possível contactar a API (${BASE}).`
+      : 'Não foi possível contactar a API. Confirme que `npm run dev:all` está a correr (Vite :3000 + API :3001).'
+    throw new Error(hint)
+  }
   if (res.status === 401) {
     const loc = window.location.pathname
     if (path.startsWith('/api/client-portal')) {
-      if (!loc.startsWith('/cliente/login')) window.location.href = '/cliente/login'
-    } else if (!loc.startsWith('/login')) {
-      window.location.href = '/login'
+      if (!isClientLoginPath(loc) && loc !== '/cliente') {
+        window.location.href = '/'
+      }
+    } else if (!isClientLoginPath(loc) && !isPanelLoginPath(loc)) {
+      window.location.href = '/'
     }
     throw new Error('Não autorizado')
   }

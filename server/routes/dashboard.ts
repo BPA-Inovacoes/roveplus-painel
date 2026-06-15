@@ -70,6 +70,8 @@ router.get('/', async (req, res) => {
     salasVencendo,
     salasVencidas,
     salas,
+    custoServidoresIptv,
+    totalSalasAtivas,
   ] = await Promise.all([
     roleFilter === 'iptv' ? 0 : prisma.client.count({ where: clientWhereNetflix }),
     roleFilter === 'netflix' ? 0 : prisma.client.count({ where: clientWhereIptv }),
@@ -133,6 +135,15 @@ router.get('/', async (req, res) => {
           },
         })
       : [],
+    canAccessServidores(user.role)
+      ? prisma
+          .$queryRawUnsafe<Array<{ total: number | string }>>(
+            `SELECT COALESCE(SUM(mensalidade), 0) as total FROM servidores WHERE tipo = 'principal'`
+          )
+          .then((r) => Number(r[0]?.total ?? 0))
+          .catch(() => 0)
+      : 0,
+    canAccessSalas(user.role) ? prisma.sala.count({ where: { status: 'ativo' } }) : 0,
   ])
 
   // Receita do mês = soma dos valores dos clientes cujo vencimento (dataFim) cai no mês atual (dia 1 a fim do mês)
@@ -208,6 +219,10 @@ router.get('/', async (req, res) => {
   const variacaoReceita =
     receitaMesAntVal > 0 ? Math.round(((receitaMesVal - receitaMesAntVal) / receitaMesAntVal) * 1000) / 10 : 0
   const receitaProjetadaVal = Math.round(receitaMensalProjetada * 100) / 100
+  const salaCustoUnit = Number(process.env.SALA_NETFLIX_CUSTO_MENSAL || 0)
+  const custoServidoresIptvVal = Math.round(Number(custoServidoresIptv || 0) * 100) / 100
+  const custoSalasNetflixVal = Math.round(Number(totalSalasAtivas || 0) * salaCustoUnit * 100) / 100
+  const lucroEstimadoVal = Math.round((receitaProjetadaVal - custoServidoresIptvVal - custoSalasNetflixVal) * 100) / 100
   const valorVencidoNetflixVal = Math.round(valorVencidoNetflix * 100) / 100
   const valorVencidoIptvVal = Math.round(valorVencidoIptv * 100) / 100
 
@@ -260,6 +275,10 @@ router.get('/', async (req, res) => {
     receitaUltimosMeses,
     salasVencendo: salasVencendo ?? 0,
     salasVencidas: salasVencidas ?? 0,
+    custoServidoresIptv: custoServidoresIptvVal,
+    custoSalasNetflix: custoSalasNetflixVal,
+    lucroEstimado: lucroEstimadoVal,
+    totalSalasAtivas: totalSalasAtivas ?? 0,
   })
 })
 

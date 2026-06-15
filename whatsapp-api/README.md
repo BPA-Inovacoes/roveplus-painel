@@ -98,6 +98,14 @@ Erros comuns:
 - `503`: WhatsApp nao conectado
 - `500`: falha no envio
 
+### `GET /pair`
+
+Página HTML com QR Code (ideal no Railway). Atualiza automaticamente até ligar.
+
+### `GET /qr`
+
+JSON com QR em data URL (requer Bearer token se configurado).
+
 ### `GET /health`
 
 Health check simples (util para monitorizacao):
@@ -148,7 +156,19 @@ A API espera payload no formato:
 }
 ```
 
-## Producao (VPS/Docker)
+## Producao (Railway — recomendado)
+
+Deploy com Docker + volume persistente. Guia completo: [RAILWAY.md](./RAILWAY.md) e no painel `docs/RAILWAY-WHATSAPP.md`.
+
+Resumo:
+
+1. Deploy do repo no [Railway](https://railway.app) (Dockerfile incluído).
+2. Variáveis: `WHATSAPP_TOKEN`, `WWEBJS_AUTH_PATH=/data/.wwebjs_auth`.
+3. Volume montado em `/data`.
+4. Abrir `https://SEU-DOMINIO/pair` e escanear o QR.
+5. No painel Vercel: `WHATSAPP_API_URL` + `WHATSAPP_TOKEN` (mesmo token).
+
+## Producao (VPS local)
 
 - Mantem o servico sempre ligado.
 - Usa volume persistente para `WWEBJS_AUTH_PATH`.

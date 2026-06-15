@@ -7,13 +7,51 @@
     @apply border-netflix-border;
   }
 
+  html {
+    scroll-behavior: smooth;
+    scrollbar-width: thin;
+    scrollbar-color: #b20710 #1a1a1a;
+  }
+
   body {
     @apply bg-netflix-bg text-gray-100 font-sans;
     font-feature-settings: "rlig" 1, "calt" 1;
+    scrollbar-width: thin;
+    scrollbar-color: #b20710 #1a1a1a;
   }
 
-  html {
-    scroll-behavior: smooth;
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #8b0000 #1f1f1f;
+  }
+
+  *::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: #141414;
+    border-radius: 999px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #e50914 0%, #8b0000 100%);
+    border-radius: 999px;
+    border: 2px solid #141414;
+    min-height: 2.5rem;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #f87171 0%, #e50914 100%);
+  }
+
+  *::-webkit-scrollbar-thumb:active {
+    background: linear-gradient(180deg, #b20710 0%, #6b0000 100%);
+  }
+
+  *::-webkit-scrollbar-corner {
+    background: #141414;
   }
 
   select {
@@ -48,6 +86,78 @@
 
   .glass-effect {
     @apply bg-white/5 backdrop-blur-md border border-white/10;
+  }
+
+  .rove-date-input {
+    @apply relative pr-10;
+    color-scheme: dark;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+
+  .rove-date-input::-webkit-calendar-picker-indicator {
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 2.75rem;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .rove-date-input::-moz-calendar-picker-indicator {
+    opacity: 0;
+  }
+
+  .rove-date-input::-webkit-datetime-edit {
+    @apply text-white;
+  }
+
+  .rove-date-input::-webkit-datetime-edit-fields-wrapper {
+    padding: 0;
+  }
+
+  .rove-date-input::-webkit-datetime-edit-text {
+    @apply text-gray-500;
+    padding: 0 0.15rem;
+  }
+
+  .rove-date-input[value='']::-webkit-datetime-edit-day-field,
+  .rove-date-input[value='']::-webkit-datetime-edit-month-field,
+  .rove-date-input[value='']::-webkit-datetime-edit-year-field,
+  .rove-date-input:not([value])::-webkit-datetime-edit-day-field,
+  .rove-date-input:not([value])::-webkit-datetime-edit-month-field,
+  .rove-date-input:not([value])::-webkit-datetime-edit-year-field {
+    @apply text-gray-500;
+  }
+
+  /* Scroll fino em painéis internos (dropdowns, modais, tabelas) */
+  .rove-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #8b0000 #1a1a1a;
+  }
+
+  .rove-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .rove-scrollbar::-webkit-scrollbar-track {
+    background: rgba(20, 20, 20, 0.85);
+    border-radius: 999px;
+    margin: 4px 0;
+  }
+
+  .rove-scrollbar::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(229, 9, 20, 0.9) 0%, rgba(139, 0, 0, 0.95) 100%);
+    border-radius: 999px;
+    border: 1.5px solid rgba(20, 20, 20, 0.9);
+  }
+
+  .rove-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #f87171 0%, #e50914 100%);
   }
 }
 

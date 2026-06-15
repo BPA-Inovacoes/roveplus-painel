@@ -1,8 +1,10 @@
 import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
-import { authMiddleware, canAccessSalas } from '../middleware/auth.js'
+import { authMiddleware, canAccessSalas, canManageSalas } from '../middleware/auth.js'
 import type { AuthPayload } from '../middleware/auth.js'
 import { auditLog } from '../middleware/audit.js'
+import { templates } from '../services/whatsapp.js'
+import { notifyPanelUsers, notifySalaClients, formatDateBr } from '../lib/whatsappNotify.js'
 
 const router = Router()
 
@@ -57,7 +59,7 @@ router.get('/', async (req, res) => {
 
 router.post('/', auditLog('create_sala', 'sala'), async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
-  if (!canAccessSalas(user.role)) return res.status(403).json({ error: 'Sem acesso a salas' })
+  if (!canManageSalas(user.role)) return res.status(403).json({ error: 'Sem permissão para criar salas' })
   const { nome, email, senha, observacoes, dataFim } = req.body
   if (!nome || String(nome).trim() === '') return res.status(400).json({ error: 'Nome da sala é obrigatório' })
   await ensureSalaStatusColumn()
@@ -71,13 +73,14 @@ router.post('/', auditLog('create_sala', 'sala'), async (req, res) => {
     },
   })
   const withStatus = await prisma.$queryRawUnsafe<Array<{ status: string }>>('SELECT status FROM salas WHERE id = $1', sala.id).then((r) => r[0])
+  void notifyPanelUsers('salas', `Nova sala Netflix: "${sala.nome}" — renovação ${formatDateBr(sala.dataFim ?? new Date())}.`)
   res.status(201).json({ ...sala, status: withStatus?.status ?? 'ativo' })
 })
 
 // Rotas com path específico antes de /:id para não serem capturadas por outras
 router.post('/:id/suspender', auditLog('suspend_sala', 'sala'), async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
-  if (!canAccessSalas(user.role)) return res.status(403).json({ error: 'Sem acesso a salas' })
+  if (!canManageSalas(user.role)) return res.status(403).json({ error: 'Sem permissão para suspender salas' })
   const id = Number(req.params.id)
   const existing = await prisma.sala.findUnique({ where: { id } })
   if (!existing) return res.status(404).json({ error: 'Sala não encontrada' })
@@ -91,6 +94,8 @@ router.post('/:id/suspender', auditLog('suspend_sala', 'sala'), async (req, res)
     const countResult = await prisma.$queryRawUnsafe<Array<{ count: number }>>('SELECT COUNT(*)::int as count FROM clients WHERE sala_id = $1', id)
     const totalClientes = countResult[0]?.count ?? 0
     if (!row) return res.status(500).json({ error: 'Erro ao obter sala após suspender' })
+    void notifySalaClients(id, (nome) => templates.salaSuspensa(nome, row.nome))
+    void notifyPanelUsers('salas', `Sala Netflix suspensa: "${row.nome}" (${totalClientes} cliente(s)).`)
     res.json({
       id: row.id,
       nome: row.nome,
@@ -109,7 +114,7 @@ router.post('/:id/suspender', auditLog('suspend_sala', 'sala'), async (req, res)
 
 router.post('/:id/ativar', auditLog('activate_sala', 'sala'), async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
-  if (!canAccessSalas(user.role)) return res.status(403).json({ error: 'Sem acesso a salas' })
+  if (!canManageSalas(user.role)) return res.status(403).json({ error: 'Sem permissão para ativar salas' })
   const id = Number(req.params.id)
   const existing = await prisma.sala.findUnique({ where: { id } })
   if (!existing) return res.status(404).json({ error: 'Sala não encontrada' })
@@ -123,6 +128,9 @@ router.post('/:id/ativar', auditLog('activate_sala', 'sala'), async (req, res) =
     const countResult = await prisma.$queryRawUnsafe<Array<{ count: number }>>('SELECT COUNT(*)::int as count FROM clients WHERE sala_id = $1', id)
     const totalClientes = countResult[0]?.count ?? 0
     if (!row) return res.status(500).json({ error: 'Erro ao obter sala após ativar' })
+    const fimStr = row.data_fim ? formatDateBr(row.data_fim) : '—'
+    void notifySalaClients(id, (nome) => templates.salaReativada(nome, row.nome, fimStr))
+    void notifyPanelUsers('salas', `Sala Netflix reativada: "${row.nome}" — renovação ${fimStr}.`)
     res.json({
       id: row.id,
       nome: row.nome,
@@ -178,6 +186,13 @@ router.post('/:id/pagar-mes', auditLog('pay_sala_month', 'sala'), async (req, re
     // coluna status pode não existir
   }
 
+  const fimStr = formatDateBr(nextMonth)
+  void notifySalaClients(id, (nome) => templates.salaContaRenovada(nome, sala.nome, fimStr))
+  void notifyPanelUsers(
+    'salas',
+    `Conta Netflix renovada: sala "${sala.nome}" — ${totalClientes} cliente(s) — próxima renovação ${fimStr}.`
+  )
+
   res.json({ ...sala, status: statusVal, totalClientes })
 })
 
@@ -194,7 +209,7 @@ router.get('/:id', async (req, res) => {
 
 router.patch('/:id', auditLog('update_sala', 'sala'), async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
-  if (!canAccessSalas(user.role)) return res.status(403).json({ error: 'Sem acesso a salas' })
+  if (!canManageSalas(user.role)) return res.status(403).json({ error: 'Sem permissão para editar salas' })
   const id = Number(req.params.id)
   const existing = await prisma.sala.findUnique({ where: { id } })
   if (!existing) return res.status(404).json({ error: 'Sala não encontrada' })
@@ -231,7 +246,7 @@ router.patch('/:id', auditLog('update_sala', 'sala'), async (req, res) => {
 
 router.delete('/:id', auditLog('delete_sala', 'sala'), async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
-  if (!canAccessSalas(user.role)) return res.status(403).json({ error: 'Sem acesso a salas' })
+  if (!canManageSalas(user.role)) return res.status(403).json({ error: 'Sem permissão para eliminar salas' })
   const id = Number(req.params.id)
   await prisma.client.updateMany({ where: { salaId: id }, data: { salaId: null } })
   await prisma.sala.delete({ where: { id } })

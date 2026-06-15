@@ -18,6 +18,9 @@ import MeuPerfil from './pages/MeuPerfil'
 import ClienteLogin from './pages/ClienteLogin'
 import ClientArea from './pages/ClientArea'
 import { useClientPortal } from './contexts/ClientPortalContext'
+import { RequirePanelRole } from './components/RequirePanelRole'
+
+const STAFF = ['admin', 'geral', 'netflix', 'iptv', 'suporte'] as const
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -29,7 +32,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     )
   }
   if (!user) {
-    return <Navigate to="/login" replace />
+    return <Navigate to="/" replace />
   }
   return <>{children}</>
 }
@@ -44,7 +47,7 @@ function ProtectedClienteRoute({ children }: { children: React.ReactNode }) {
     )
   }
   if (!client) {
-    return <Navigate to="/cliente/login" replace />
+    return <Navigate to="/" replace />
   }
   return <>{children}</>
 }
@@ -53,7 +56,8 @@ function App() {
   return (
     <AlertProvider>
       <Routes>
-      <Route path="/cliente/login" element={<ClienteLogin />} />
+      <Route path="/" element={<ClienteLogin />} />
+      <Route path="/cliente/login" element={<Navigate to="/" replace />} />
       <Route
         path="/cliente"
         element={
@@ -63,26 +67,19 @@ function App() {
         }
       />
       <Route path="/login" element={<Login />} />
-      <Route
-        path="/"
-        element={
-          <ProtectedRoute>
-            <Layout />
-          </ProtectedRoute>
-        }
-      >
-        <Route index element={<Dashboard />} />
-        <Route path="clientes" element={<Clientes />} />
-        <Route path="servidores" element={<Servidores />} />
-        <Route path="revendedores" element={<Revendedores />} />
-        <Route path="salas" element={<Salas />} />
-        <Route path="indicacoes" element={<Indicacoes />} />
-        <Route path="utilizadores" element={<Utilizadores />} />
-        <Route path="financeiro" element={<Financeiro />} />
-        <Route path="notificacoes" element={<Notificacoes />} />
-        <Route path="perfil" element={<MeuPerfil />} />
-        <Route path="audit" element={<Audit />} />
-        <Route path="manual" element={<Manual />} />
+      <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+        <Route path="/dashboard" element={<RequirePanelRole allow={[...STAFF]}><Dashboard /></RequirePanelRole>} />
+        <Route path="/clientes" element={<RequirePanelRole allow={[...STAFF]}><Clientes /></RequirePanelRole>} />
+        <Route path="/servidores" element={<RequirePanelRole allow={['admin', 'geral', 'iptv', 'suporte']}><Servidores /></RequirePanelRole>} />
+        <Route path="/revendedores" element={<RequirePanelRole allow={['admin', 'geral', 'iptv', 'suporte']}><Revendedores /></RequirePanelRole>} />
+        <Route path="/salas" element={<RequirePanelRole allow={['admin', 'geral', 'netflix', 'suporte']}><Salas /></RequirePanelRole>} />
+        <Route path="/indicacoes" element={<RequirePanelRole allow={[...STAFF]}><Indicacoes /></RequirePanelRole>} />
+        <Route path="/utilizadores" element={<RequirePanelRole allow={['admin']}><Utilizadores /></RequirePanelRole>} />
+        <Route path="/financeiro" element={<RequirePanelRole allow={['admin', 'financeiro']}><Financeiro /></RequirePanelRole>} />
+        <Route path="/notificacoes" element={<Notificacoes />} />
+        <Route path="/perfil" element={<MeuPerfil />} />
+        <Route path="/audit" element={<RequirePanelRole allow={['admin']}><Audit /></RequirePanelRole>} />
+        <Route path="/manual" element={<Manual />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
 import { clientPortalApi } from '../api/clientPortal'
+import { isClientLoginPath } from '../lib/publicRoutes'
 
 export interface ClientPortalUser {
   id: number
@@ -19,7 +20,7 @@ const ClientPortalContext = createContext<ClientPortalContextValue | null>(null)
 
 /** Rotas da app «cliente final»: /cliente e /cliente/... — não confundir com /clientes (painel admin). */
 function isClienteAppPath(path: string): boolean {
-  if (path.startsWith('/cliente/login')) return false
+  if (isClientLoginPath(path)) return false
   return path === '/cliente' || path.startsWith('/cliente/')
 }
 

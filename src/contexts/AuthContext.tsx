@@ -12,7 +12,7 @@ export interface User {
 interface AuthContextValue {
   user: User | null
   loading: boolean
-  login: (email: string, password: string) => Promise<void>
+  login: (email: string, password: string) => Promise<User>
   logout: () => Promise<void>
   refetch: () => Promise<void>
 }
@@ -41,6 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     const u = await api.post<{ user: User }>('/api/auth/login', { email, password })
     setUser(u.user)
+    return u.user
   }, [])
 
   const logout = useCallback(async () => {

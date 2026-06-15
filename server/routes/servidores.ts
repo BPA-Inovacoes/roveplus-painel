@@ -1,8 +1,14 @@
 import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
-import { authMiddleware, canAccessServidores } from '../middleware/auth.js'
+import { authMiddleware, canAccessServidores, canManageServidores } from '../middleware/auth.js'
 import type { AuthPayload } from '../middleware/auth.js'
 import { auditLog } from '../middleware/audit.js'
+import { templates } from '../services/whatsapp.js'
+import {
+  notifyPanelUsers,
+  notifyServidorClients,
+  formatDateBr,
+} from '../lib/whatsappNotify.js'
 
 const router = Router()
 
@@ -75,7 +81,7 @@ router.get('/:id', async (req, res) => {
 
 router.post('/', auditLog('create_servidor', 'servidor'), async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
-  if (!canAccessServidores(user.role)) return res.status(403).json({ error: 'Sem acesso a servidores' })
+  if (!canManageServidores(user.role)) return res.status(403).json({ error: 'Sem permissão para criar servidores' })
   const { nome, tipo, status, servidorId, mensalidade, dataPagamento } = req.body
   await ensureServidorPagamentoColumns().catch(() => {})
   const data: Record<string, unknown> = {
@@ -103,12 +109,15 @@ router.post('/', auditLog('create_servidor', 'servidor'), async (req, res) => {
     mensalidade: pay?.mensalidade != null ? Number(pay.mensalidade) : null,
     dataPagamento: pay?.data_pagamento ?? null,
   })
+  void notifyPanelUsers('servidores', `Novo servidor IPTV: "${servidor.nome}" (${servidor.tipo}).`)
 })
 
 router.patch('/:id', auditLog('update_servidor', 'servidor'), async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
-  if (!canAccessServidores(user.role)) return res.status(403).json({ error: 'Sem acesso a servidores' })
+  if (!canManageServidores(user.role)) return res.status(403).json({ error: 'Sem permissão para editar servidores' })
   const id = Number(req.params.id)
+  const existing = await prisma.servidor.findUnique({ where: { id } })
+  if (!existing) return res.status(404).json({ error: 'Servidor não encontrado' })
   const { nome, tipo, status, servidorId, mensalidade, dataPagamento } = req.body
   await ensureServidorPagamentoColumns().catch(() => {})
   const update: Record<string, unknown> = {}
@@ -135,6 +144,15 @@ router.patch('/:id', auditLog('update_servidor', 'servidor'), async (req, res) =
     mensalidade: pay?.mensalidade != null ? Number(pay.mensalidade) : null,
     dataPagamento: pay?.data_pagamento ?? null,
   })
+  if (status != null && status !== existing.status && (status === 'offline' || status === 'instável')) {
+    void notifyPanelUsers(
+      'servidores',
+      `Servidor "${servidor.nome}" passou a ${status}.`
+    )
+    if (status === 'offline') {
+      void notifyServidorClients(id, (nome) => templates.servidorManutencao(nome, servidor.nome))
+    }
+  }
 })
 
 router.post('/:id/pagar-mes-principal', auditLog('pay_servidor_month', 'servidor'), async (req, res) => {
@@ -151,8 +169,10 @@ router.post('/:id/pagar-mes-principal', auditLog('pay_servidor_month', 'servidor
     'SELECT data_pagamento FROM servidores WHERE id = $1',
     id
   ).then((r) => r[0]).catch(() => ({ data_pagamento: null }))
+  const mesesRaw = Number(req.body?.meses)
+  const mesesAdd = Number.isFinite(mesesRaw) ? Math.min(24, Math.max(1, Math.round(mesesRaw))) : 1
   const base = pay?.data_pagamento ? new Date(pay.data_pagamento) : new Date()
-  const next = addMonthsKeepingDay(base, 1)
+  const next = addMonthsKeepingDay(base, mesesAdd)
   await prisma.$executeRawUnsafe('UPDATE servidores SET data_pagamento = $1 WHERE id = $2', next, id)
   const updated = await prisma.$queryRawUnsafe<Array<{ mensalidade: number | null; data_pagamento: Date | null }>>(
     'SELECT mensalidade, data_pagamento FROM servidores WHERE id = $1',
@@ -166,11 +186,16 @@ router.post('/:id/pagar-mes-principal', auditLog('pay_servidor_month', 'servidor
     mensalidade: updated?.mensalidade != null ? Number(updated.mensalidade) : null,
     dataPagamento: updated?.data_pagamento ?? null,
   })
+  const fimStr = updated?.data_pagamento ? formatDateBr(updated.data_pagamento) : '—'
+  void notifyPanelUsers(
+    ['servidores', 'financeiro'],
+    `Pagamento servidor registado: "${existing.nome}" — próximo pagamento ${fimStr}.`
+  )
 })
 
 router.post('/:id/suspender', auditLog('suspend_servidor', 'servidor'), async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
-  if (!canAccessServidores(user.role)) return res.status(403).json({ error: 'Sem acesso a servidores' })
+  if (!canManageServidores(user.role)) return res.status(403).json({ error: 'Sem permissão para suspender servidores' })
   const id = Number(req.params.id)
   const existing = await prisma.servidor.findUnique({ where: { id } })
   if (!existing) return res.status(404).json({ error: 'Servidor não encontrado' })
@@ -181,12 +206,14 @@ router.post('/:id/suspender', auditLog('suspend_servidor', 'servidor'), async (r
     where: { id },
     data: { status: 'offline' },
   })
+  void notifyPanelUsers('servidores', `Servidor "${servidor.nome}" suspenso (offline).`)
+  void notifyServidorClients(id, (nome) => templates.servidorManutencao(nome, servidor.nome))
   res.json(servidor)
 })
 
 router.delete('/:id', auditLog('delete_servidor', 'servidor'), async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
-  if (!canAccessServidores(user.role)) return res.status(403).json({ error: 'Sem acesso a servidores' })
+  if (!canManageServidores(user.role)) return res.status(403).json({ error: 'Sem permissão para eliminar servidores' })
   await prisma.servidor.delete({ where: { id: Number(req.params.id) } })
   res.status(204).send()
 })

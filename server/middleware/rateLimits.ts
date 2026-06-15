@@ -25,3 +25,11 @@ export const clientPortalRecoverRateLimit = rateLimit({
   legacyHeaders: false,
   message: { error: 'Limite de pedidos de recuperação de PIN atingido. Tente de novo mais tarde.' },
 })
+
+export const clientPortalAssistantRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 80,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Muitas mensagens ao assistente. Aguarde um momento e tente de novo.' },
+})

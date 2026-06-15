@@ -1,3 +1,5 @@
+import { isClientLoginPath } from '../lib/publicRoutes'
+
 const BASE = import.meta.env.VITE_API_URL || ''
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -10,8 +12,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     },
   })
   if (res.status === 401) {
-    if (!window.location.pathname.startsWith('/cliente/login')) {
-      window.location.href = '/cliente/login'
+    if (!isClientLoginPath()) {
+      window.location.href = '/'
     }
     throw new Error('Não autorizado')
   }

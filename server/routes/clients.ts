@@ -2,15 +2,22 @@ import { Router } from 'express'
 import bcrypt from 'bcryptjs'
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma.js'
-import { authMiddleware, getRoleServicoFilter, canAccessServico } from '../middleware/auth.js'
+import { authMiddleware, getRoleServicoFilter, canAccessServico, canManageClients } from '../middleware/auth.js'
 import type { AuthPayload } from '../middleware/auth.js'
 import { auditLog } from '../middleware/audit.js'
 import { sendWhatsAppMessage, templates, normalizeClientWhatsappKey } from '../services/whatsapp.js'
+import {
+  notifyPanelUsers,
+  clientAreaUrl,
+  formatDateBr,
+  sameCalendarDay,
+} from '../lib/whatsappNotify.js'
 import {
   ensurePortalPinPlainColumn,
   getPortalPinPlainMap,
   setPortalPinPlainInDb,
 } from '../lib/portalPinPlain.js'
+import { ensureClientRoveId, getRoveIdsMap } from '../lib/roveId.js'
 
 const router = Router()
 
@@ -28,53 +35,6 @@ async function ensurePortalFirstLoginColumn(): Promise<void> {
   `)
 }
 
-async function ensureRoveIdColumn(): Promise<void> {
-  await prisma.$executeRawUnsafe(`
-    ALTER TABLE clients
-    ADD COLUMN IF NOT EXISTS rove_id TEXT
-  `)
-  await prisma.$executeRawUnsafe(`
-    CREATE UNIQUE INDEX IF NOT EXISTS clients_rove_id_unique_idx
-    ON clients (rove_id)
-    WHERE rove_id IS NOT NULL
-  `)
-}
-
-function buildRoveIdCandidate(): string {
-  const year = new Date().getFullYear()
-  const random4 = Math.floor(1000 + Math.random() * 9000)
-  return `RV${year}${String(random4)}`
-}
-
-async function getRoveId(clientId: number): Promise<string | null> {
-  await ensureRoveIdColumn().catch(() => {})
-  const rows = await prisma.$queryRawUnsafe<Array<{ rove_id: string | null }>>(
-    'SELECT rove_id FROM clients WHERE id = $1 LIMIT 1',
-    clientId
-  )
-  return rows[0]?.rove_id ?? null
-}
-
-async function ensureClientRoveId(clientId: number): Promise<string> {
-  await ensureRoveIdColumn().catch(() => {})
-  const existing = await getRoveId(clientId)
-  if (existing) return existing
-
-  for (let i = 0; i < 30; i++) {
-    const candidate = buildRoveIdCandidate()
-    const used = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
-      'SELECT id FROM clients WHERE rove_id = $1 LIMIT 1',
-      candidate
-    )
-    if (used.length > 0) continue
-    await prisma.$executeRawUnsafe('UPDATE clients SET rove_id = $1 WHERE id = $2 AND rove_id IS NULL', candidate, clientId)
-    const assigned = await getRoveId(clientId)
-    if (assigned) return assigned
-  }
-
-  throw new Error('Não foi possível gerar ID ROVE único')
-}
-
 /** Adiciona N meses à data fim atual (mantém o dia; renovar = +1 mês, +2 meses, etc.). */
 function adicionarMesesADataFim(base: Date, meses: number): Date {
   const d = new Date(base)
@@ -84,7 +44,7 @@ function adicionarMesesADataFim(base: Date, meses: number): Date {
 }
 
 router.get('/', async (req, res) => {
-  const { servico, servidorId, status, vencendo, revendedorId } = req.query
+  const { servico, servidorId, status, vencendo, revendedorId, salaId, q, inscricaoPaga } = req.query
   const user = (req as unknown as { user: AuthPayload }).user
   const includePortalPin = user.role === 'admin' && String(req.query.includePortalPin) === '1'
   const roleFilter = getRoleServicoFilter(user.role)
@@ -98,11 +58,12 @@ router.get('/', async (req, res) => {
     data: { status: 'vencido' },
   })
 
-  const where: Record<string, unknown> = {}
+  const where: Prisma.ClientWhereInput = {}
   if (roleFilter) where.servico = roleFilter
-  else if (servico) where.servico = servico
+  else if (servico) where.servico = String(servico)
   if (servidorId) where.servidorId = Number(servidorId)
-  if (status) where.status = status
+  if (salaId) where.salaId = Number(salaId)
+  if (status) where.status = String(status)
   if (vencendo === 'hoje') {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
@@ -127,32 +88,57 @@ router.get('/', async (req, res) => {
     where.dataFim = { gte: today, lte: in7 }
     where.status = 'ativo'
   }
-  if (req.query.revendedorId) where.revendedorId = Number(req.query.revendedorId)
+  if (revendedorId) where.revendedorId = Number(revendedorId)
+  if (inscricaoPaga === 'true' || inscricaoPaga === '1') where.inscricaoPaga = true
+  else if (inscricaoPaga === 'false' || inscricaoPaga === '0') where.inscricaoPaga = false
+  else if (inscricaoPaga === 'pendente') {
+    where.OR = [{ inscricaoPaga: false }, { inscricaoPaga: null }]
+  }
+
+  const qTerm = typeof q === 'string' ? q.trim() : ''
+  if (qTerm) {
+    const digits = qTerm.replace(/\D/g, '')
+    const or: Prisma.ClientWhereInput[] = [
+      { nome: { contains: qTerm, mode: 'insensitive' } },
+      { whatsapp: { contains: qTerm } },
+      { localizacao: { contains: qTerm, mode: 'insensitive' } },
+      { plano: { contains: qTerm, mode: 'insensitive' } },
+      { perfil: { contains: qTerm, mode: 'insensitive' } },
+      { roveId: { contains: qTerm, mode: 'insensitive' } },
+      { servidor: { nome: { contains: qTerm, mode: 'insensitive' } } },
+      { revendedor: { nome: { contains: qTerm, mode: 'insensitive' } } },
+      { sala: { nome: { contains: qTerm, mode: 'insensitive' } } },
+    ]
+    if (digits && digits !== qTerm) {
+      or.push({ whatsapp: { contains: digits } })
+    }
+    where.AND = [{ OR: or }]
+  }
+
   const clients = await prisma.client.findMany({
     where,
     include: { servidor: true, revendedor: true, sala: true },
     orderBy: { dataFim: 'asc' },
   })
-  const pinPlainById = includePortalPin ? await getPortalPinPlainMap(clients.map((c) => c.id)) : null
-  const enriched = await Promise.all(
-    clients.map(async (c) => {
-      const roveId = await ensureClientRoveId(c.id)
-      const areaClienteAtiva = !!c.portalPinHash
-      const base = stripPortalPinHash({ ...c, valor: Number(c.valor) } as Record<string, unknown>)
-      const fromDb = pinPlainById?.get(Number(c.id))
-      return {
-        ...base,
-        roveId,
-        areaClienteAtiva,
-        ...(includePortalPin
-          ? {
-              portalPinPlain:
-                fromDb != null && String(fromDb) !== '' ? fromDb : null,
-            }
-          : {}),
-      }
-    })
-  )
+  const [pinPlainById, roveById] = await Promise.all([
+    includePortalPin ? getPortalPinPlainMap(clients.map((c) => c.id)) : Promise.resolve(null),
+    getRoveIdsMap(clients.map((c) => c.id)),
+  ])
+  const enriched = clients.map((c) => {
+    const areaClienteAtiva = !!c.portalPinHash
+    const base = stripPortalPinHash({ ...c, valor: Number(c.valor) } as Record<string, unknown>)
+    const fromDb = pinPlainById?.get(Number(c.id))
+    return {
+      ...base,
+      roveId: roveById.get(c.id) ?? null,
+      areaClienteAtiva,
+      ...(includePortalPin
+        ? {
+            portalPinPlain: fromDb != null && String(fromDb) !== '' ? fromDb : null,
+          }
+        : {}),
+    }
+  })
   res.json(enriched)
 })
 
@@ -175,6 +161,7 @@ router.get('/:id', async (req, res) => {
 router.post('/', auditLog('create_client', 'client'), async (req, res) => {
   await ensurePortalPinPlainColumn().catch(() => {})
   const user = (req as unknown as { user: AuthPayload }).user
+  if (!canManageClients(user.role)) return res.status(403).json({ error: 'Sem permissão para criar clientes' })
   const body = req.body
   const servico = body.servico || 'iptv'
   if (!canAccessServico(user.role, servico)) return res.status(403).json({ error: 'Sem permissão para criar cliente deste serviço' })
@@ -223,9 +210,24 @@ router.post('/', auditLog('create_client', 'client'), async (req, res) => {
   if (portalPinHash) {
     await ensurePortalFirstLoginColumn().catch(() => {})
     await prisma.$executeRawUnsafe('UPDATE clients SET portal_first_login = true WHERE id = $1', client.id).catch(() => {})
+    void sendWhatsAppMessage(
+      client.whatsapp,
+      templates.areaClienteAtivada(client.nome, clientAreaUrl())
+    ).catch(() => {})
   }
   const msg = templates.clienteCadastrado(client.nome, dataFim.toLocaleDateString('pt-BR'))
   void sendWhatsAppMessage(client.whatsapp, msg).catch(() => {})
+  const servicoLabel = servico === 'netflix' ? 'Netflix' : 'IPTV'
+  void notifyPanelUsers(
+    servico === 'netflix' ? 'clientes_netflix' : 'clientes_iptv',
+    `Novo cliente: ${client.nome} (${servicoLabel})\nWhatsApp: ${client.whatsapp}\nRenovação: ${formatDateBr(dataFim)}`
+  )
+  if (servico === 'netflix' && client.inscricaoPaga === false) {
+    void notifyPanelUsers(
+      'financeiro',
+      `Inscrição Netflix pendente: ${client.nome} — plano ${client.plano}.`
+    )
+  }
   const roveId = await ensureClientRoveId(client.id)
   res.status(201).json({
     ...stripPortalPinHash({ ...client, valor: Number(client.valor) } as Record<string, unknown>),
@@ -242,6 +244,14 @@ router.patch('/:id', auditLog('update_client', 'client'), async (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Cliente não encontrado' })
   if (!canAccessServico(user.role, existing.servico)) return res.status(403).json({ error: 'Sem acesso a este cliente' })
   const body = req.body
+  if (user.role === 'financeiro') {
+    const keys = Object.keys(body).filter((k) => body[k] !== undefined)
+    if (keys.length !== 1 || keys[0] !== 'inscricaoPaga') {
+      return res.status(403).json({ error: 'Perfil financeiro só pode marcar inscrição como paga' })
+    }
+  } else if (!canManageClients(user.role)) {
+    return res.status(403).json({ error: 'Sem permissão para alterar clientes' })
+  }
   if (body.servico != null && !canAccessServico(user.role, body.servico)) return res.status(403).json({ error: 'Sem permissão para este serviço' })
   const data: Prisma.ClientUncheckedUpdateInput = {}
   if (body.nome != null) data.nome = body.nome
@@ -291,6 +301,57 @@ router.patch('/:id', auditLog('update_client', 'client'), async (req, res) => {
     const mustChange = !(body.portalPin === null || String(body.portalPin).trim() === '')
     await prisma.$executeRawUnsafe('UPDATE clients SET portal_first_login = $1 WHERE id = $2', mustChange, id).catch(() => {})
   }
+
+  const fimStr = formatDateBr(client.dataFim)
+  const hadPortalPin = !!existing.portalPinHash
+  const hasPortalPin = !!client.portalPinHash
+  if (!hadPortalPin && hasPortalPin && body.portalPin != null && String(body.portalPin).trim() !== '') {
+    void sendWhatsAppMessage(
+      client.whatsapp,
+      templates.areaClienteAtivada(client.nome, clientAreaUrl())
+    ).catch(() => {})
+  }
+  if (body.inscricaoPaga === true && existing.inscricaoPaga !== true) {
+    void sendWhatsAppMessage(
+      client.whatsapp,
+      templates.inscricaoConfirmada(client.nome, client.plano)
+    ).catch(() => {})
+    void notifyPanelUsers('financeiro', `Inscrição paga: ${client.nome} — plano ${client.plano}.`)
+  }
+  if (body.status === 'cancelado' && existing.status !== 'cancelado') {
+    void sendWhatsAppMessage(client.whatsapp, templates.contaCancelada(client.nome)).catch(() => {})
+    void notifyPanelUsers(
+      client.servico === 'netflix' ? 'clientes_netflix' : 'clientes_iptv',
+      `Cliente cancelado: ${client.nome} (${client.whatsapp}).`
+    )
+  }
+  if (body.dataFim != null && !sameCalendarDay(new Date(body.dataFim), existing.dataFim)) {
+    void sendWhatsAppMessage(
+      client.whatsapp,
+      templates.dataRenovacaoAlterada(client.nome, fimStr)
+    ).catch(() => {})
+  }
+  const iptvChanged =
+    (body.iptvUser != null && body.iptvUser !== existing.iptvUser) ||
+    (body.iptvPass != null && body.iptvPass !== existing.iptvPass) ||
+    (body.iptvMac != null && body.iptvMac !== existing.iptvMac) ||
+    (body.iptvM3u != null && body.iptvM3u !== existing.iptvM3u)
+  if (iptvChanged && client.servico === 'iptv') {
+    void sendWhatsAppMessage(
+      client.whatsapp,
+      templates.credenciaisIptvAtualizadas(client.nome)
+    ).catch(() => {})
+  }
+  const netflixChanged =
+    (body.pin !== undefined && body.pin !== existing.pin) ||
+    (body.perfil != null && body.perfil !== existing.perfil)
+  if (netflixChanged && client.servico === 'netflix') {
+    void sendWhatsAppMessage(
+      client.whatsapp,
+      templates.credenciaisNetflixAtualizadas(client.nome, client.perfil)
+    ).catch(() => {})
+  }
+
   const roveId = await ensureClientRoveId(client.id)
   res.json({
     ...stripPortalPinHash({ ...client, valor: Number(client.valor) } as Record<string, unknown>),
@@ -381,6 +442,7 @@ router.post('/:id/marcar-pago', auditLog('mark_paid_client', 'client'), async (r
 
 router.post('/:id/suspender', auditLog('suspend_client', 'client'), async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
+  if (!canManageClients(user.role)) return res.status(403).json({ error: 'Sem permissão para suspender clientes' })
   const id = Number(req.params.id)
   const existing = await prisma.client.findUnique({ where: { id } })
   if (!existing) return res.status(404).json({ error: 'Cliente não encontrado' })
@@ -391,7 +453,13 @@ router.post('/:id/suspender', auditLog('suspend_client', 'client'), async (req, 
     data: { status: 'vencido', whatsappNotificadoVencimentoAt: new Date() },
   })
   const msg = templates.servicoSuspenso(updated.nome)
-  void sendWhatsAppMessage(updated.whatsapp, msg).catch(() => {})
+  void sendWhatsAppMessage(updated.whatsapp, msg).catch((err) => {
+    console.error('[WhatsApp] Falha ao notificar suspensão:', updated.whatsapp, err)
+  })
+  void notifyPanelUsers(
+    updated.servico === 'netflix' ? 'clientes_netflix' : 'clientes_iptv',
+    `Cliente suspenso: ${updated.nome} (${updated.whatsapp}).`
+  )
   res.json({
     ...stripPortalPinHash({ ...updated, valor: Number(updated.valor) } as Record<string, unknown>),
     areaClienteAtiva: !!updated.portalPinHash,
@@ -421,6 +489,10 @@ router.post('/:id/ativar', auditLog('activate_client', 'client'), async (req, re
   const fimStr = dataFim.toLocaleDateString('pt-BR')
   const msgAtiv = templates.reativado(updated.nome, fimStr)
   void sendWhatsAppMessage(updated.whatsapp, msgAtiv).catch(() => {})
+  void notifyPanelUsers(
+    updated.servico === 'netflix' ? 'clientes_netflix' : 'clientes_iptv',
+    `Cliente reativado: ${updated.nome} — renovação ${fimStr}.`
+  )
   res.json({
     ...stripPortalPinHash({ ...updated, valor: Number(updated.valor) } as Record<string, unknown>),
     areaClienteAtiva: !!updated.portalPinHash,
@@ -429,10 +501,16 @@ router.post('/:id/ativar', auditLog('activate_client', 'client'), async (req, re
 
 router.delete('/:id', auditLog('delete_client', 'client'), async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
+  if (!canManageClients(user.role)) return res.status(403).json({ error: 'Sem permissão para eliminar clientes' })
   const id = Number(req.params.id)
   const existing = await prisma.client.findUnique({ where: { id } })
   if (!existing) return res.status(404).json({ error: 'Cliente não encontrado' })
   if (!canAccessServico(user.role, existing.servico)) return res.status(403).json({ error: 'Sem acesso a este cliente' })
+  void sendWhatsAppMessage(existing.whatsapp, templates.contaEncerrada(existing.nome)).catch(() => {})
+  void notifyPanelUsers(
+    existing.servico === 'netflix' ? 'clientes_netflix' : 'clientes_iptv',
+    `Cliente eliminado: ${existing.nome} (${existing.whatsapp}).`
+  )
   await prisma.client.delete({ where: { id } })
   res.status(204).send()
 })

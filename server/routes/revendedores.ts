@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma.js'
 import { authMiddleware, canAccessServidores } from '../middleware/auth.js'
 import type { AuthPayload } from '../middleware/auth.js'
 import { auditLog } from '../middleware/audit.js'
+import { notifyPanelUsers } from '../lib/whatsappNotify.js'
 
 const router = Router()
 
@@ -52,6 +53,7 @@ router.post('/', auditLog('create_revendedor', 'revendedor'), async (req, res) =
     include: { servidor: true },
   })
   res.status(201).json({ ...revendedor, totalClientes: 0 })
+  void notifyPanelUsers('servidores', `Novo revendedor: ${revendedor.nome} — servidor ${servidor.id}.`)
 })
 
 // Rotas com path específico primeiro (/:id/suspender, /:id/ativar)
@@ -68,6 +70,7 @@ router.post('/:id/suspender', auditLog('suspend_revendedor', 'revendedor'), asyn
       include: { servidor: true, _count: { select: { clients: true } } },
     })
     const { _count, ...rest } = revendedor
+    void notifyPanelUsers('servidores', `Revendedor suspenso: ${revendedor.nome} (${_count.clients} cliente(s)).`)
     res.json({ ...rest, totalClientes: _count.clients })
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Erro ao suspender'
@@ -88,6 +91,7 @@ router.post('/:id/ativar', auditLog('activate_revendedor', 'revendedor'), async 
       include: { servidor: true, _count: { select: { clients: true } } },
     })
     const { _count, ...rest } = revendedor
+    void notifyPanelUsers('servidores', `Revendedor reativado: ${revendedor.nome}.`)
     res.json({ ...rest, totalClientes: _count.clients })
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Erro ao ativar'

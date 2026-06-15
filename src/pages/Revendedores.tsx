@@ -1,6 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { RoveModalOverlay } from '../components/RoveModalOverlay'
 import { motion } from 'framer-motion'
-import { Plus, Edit2, Trash2, Store, AlertTriangle, CheckCircle } from 'lucide-react'
+import { Plus, Edit2, Trash2, Store, AlertTriangle, CheckCircle, Search, RefreshCw } from 'lucide-react'
+import { RoveSelect } from '../components/RoveSelect'
+import { WhatsappAoInput } from '../components/WhatsappAoInput'
+import { RoveWhatsappLink } from '../components/RoveWhatsappLink'
+import { ROVE_FORM_INPUT_SM, RoveFormLabel } from '../components/roveFormUi'
+import { emptyWhatsapp, formatWhatsapp, isWhatsappValid } from '../utils/whatsapp'
 import { api } from '../api/client'
 import { useAlert } from '../contexts/AlertContext'
 import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
@@ -30,18 +36,33 @@ export default function Revendedores() {
   const [modal, setModal] = useState<'new' | 'edit' | null>(null)
   const [revendedorSuspender, setRevendedorSuspender] = useState<Revendedor | null>(null)
   const [revendedorAtivar, setRevendedorAtivar] = useState<Revendedor | null>(null)
+  const [revendedorToDelete, setRevendedorToDelete] = useState<Revendedor | null>(null)
   const [form, setForm] = useState<Partial<Revendedor>>({
     nome: '',
-    contacto: '',
+    contacto: emptyWhatsapp(),
     servidorId: null,
     observacoes: '',
   })
   const [tablePage, setTablePage] = useState(1)
+  const [filter, setFilter] = useState({ status: '', servidorId: '' })
+  const [search, setSearch] = useState('')
+  const [searchDebounced, setSearchDebounced] = useState('')
   const servidoresPrincipais = servidores.filter((s) => (s.tipo || 'principal') === 'principal')
 
-  const totalTablePages = Math.max(1, Math.ceil(list.length / ROWS_PER_PAGE))
+  const filteredList = useMemo(() => {
+    const q = searchDebounced.trim().toLowerCase()
+    return list.filter((r) => {
+      if (filter.status && (r.status || 'ativo') !== filter.status) return false
+      if (filter.servidorId && String(r.servidorId ?? '') !== filter.servidorId) return false
+      if (!q) return true
+      const hay = [r.nome, r.contacto, r.servidor?.nome, r.observacoes].filter(Boolean).join(' ').toLowerCase()
+      return hay.includes(q)
+    })
+  }, [list, filter, searchDebounced])
+
+  const totalTablePages = Math.max(1, Math.ceil(filteredList.length / ROWS_PER_PAGE))
   const tablePageClamped = Math.min(tablePage, totalTablePages)
-  const pagedList = list.slice((tablePageClamped - 1) * ROWS_PER_PAGE, tablePageClamped * ROWS_PER_PAGE)
+  const pagedList = filteredList.slice((tablePageClamped - 1) * ROWS_PER_PAGE, tablePageClamped * ROWS_PER_PAGE)
 
   function load() {
     setLoading(true)
@@ -61,9 +82,23 @@ export default function Revendedores() {
     load()
   }, [])
 
+  useEffect(() => {
+    const t = window.setTimeout(() => setSearchDebounced(search), 300)
+    return () => window.clearTimeout(t)
+  }, [search])
+
+  useEffect(() => {
+    setTablePage(1)
+  }, [filter, searchDebounced])
+
   async function save() {
-    if (!form.nome || !form.contacto) {
-      showWarning('Nome e contacto são obrigatórios.')
+    const nome = (form.nome ?? '').trim()
+    if (!nome) {
+      showWarning('Nome é obrigatório.')
+      return
+    }
+    if (!isWhatsappValid(form.contacto || '')) {
+      showWarning('Contacto inválido (+244, +351 ou +55 com número completo).')
       return
     }
     if (!form.servidorId) {
@@ -73,14 +108,14 @@ export default function Revendedores() {
     try {
       if (modal === 'new') {
         await api.post('/api/revendedores', {
-          nome: form.nome,
+          nome,
           contacto: form.contacto,
           servidorId: form.servidorId || null,
           observacoes: form.observacoes || null,
         })
       } else if (form.id) {
         await api.patch(`/api/revendedores/${form.id}`, {
-          nome: form.nome,
+          nome,
           contacto: form.contacto,
           servidorId: form.servidorId ?? null,
           observacoes: form.observacoes ?? null,
@@ -88,7 +123,7 @@ export default function Revendedores() {
         })
       }
       setModal(null)
-      setForm({ nome: '', contacto: '', servidorId: null, observacoes: '' })
+      setForm({ nome: '', contacto: emptyWhatsapp(), servidorId: null, observacoes: '' })
       load()
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Erro ao guardar')
@@ -117,10 +152,11 @@ export default function Revendedores() {
     }
   }
 
-  async function remove(id: number) {
-    if (!confirm('Excluir revendedor? Os clientes vinculados ficarão sem revendedor.')) return
+  async function confirmarExcluir() {
+    if (!revendedorToDelete) return
     try {
-      await api.delete(`/api/revendedores/${id}`)
+      await api.delete(`/api/revendedores/${revendedorToDelete.id}`)
+      setRevendedorToDelete(null)
       load()
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Erro')
@@ -128,9 +164,9 @@ export default function Revendedores() {
   }
 
   const stats = {
-    total: list.length,
-    ativos: list.filter((r) => (r.status || 'ativo') === 'ativo').length,
-    suspensos: list.filter((r) => r.status === 'suspenso').length,
+    total: filteredList.length,
+    ativos: filteredList.filter((r) => (r.status || 'ativo') === 'ativo').length,
+    suspensos: filteredList.filter((r) => r.status === 'suspenso').length,
   }
 
   return (
@@ -158,7 +194,7 @@ export default function Revendedores() {
           <button
             type="button"
             onClick={() => {
-              setForm({ nome: '', contacto: '', servidorId: null, observacoes: '' })
+              setForm({ nome: '', contacto: emptyWhatsapp(), servidorId: null, observacoes: '' })
               setModal('new')
             }}
             className="flex items-center gap-2 py-2 px-4 bg-primary-600 text-white rounded-lg hover:bg-primary-700 text-sm font-medium shadow-lg shadow-primary-900/30 shrink-0"
@@ -167,6 +203,56 @@ export default function Revendedores() {
             Novo revendedor
           </button>
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 p-4 rounded-xl bg-netflix-card/60 border border-netflix-border/80">
+        <div className="w-44 min-w-[11rem] sm:w-48">
+          <RoveSelect
+            compact
+            value={filter.servidorId}
+            onChange={(e) => setFilter((f) => ({ ...f, servidorId: e.target.value }))}
+            placeholder="Todos os servidores"
+            title="Filtrar por servidor"
+          >
+            <option value="">Todos os servidores</option>
+            {servidoresPrincipais.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.nome}
+              </option>
+            ))}
+          </RoveSelect>
+        </div>
+        <div className="w-40 min-w-[10rem]">
+          <RoveSelect
+            compact
+            value={filter.status}
+            onChange={(e) => setFilter((f) => ({ ...f, status: e.target.value }))}
+            placeholder="Todos os estados"
+            title="Filtrar por estado"
+          >
+            <option value="">Todos os estados</option>
+            <option value="ativo">Ativo</option>
+            <option value="suspenso">Suspenso</option>
+          </RoveSelect>
+        </div>
+        <div className="relative flex-1 min-w-[180px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+          <input
+            type="text"
+            placeholder="Nome, contacto, servidor..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full min-h-[32px] pl-10 pr-3 py-1.5 rounded-lg border border-netflix-border bg-netflix-panel text-white placeholder-gray-500 text-xs focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500/50 outline-none transition-colors"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => load()}
+          className="p-2 rounded-lg border border-netflix-border bg-netflix-panel hover:bg-netflix-hover text-gray-300 hover:text-white transition-colors"
+          title="Atualizar lista"
+        >
+          <RefreshCw className="w-4 h-4" />
+        </button>
       </div>
 
       <div className="rounded-xl border border-netflix-border/80 bg-netflix-card/80 shadow-lg shadow-black/40 overflow-hidden">
@@ -200,7 +286,9 @@ export default function Revendedores() {
                         <span className="font-medium text-white">{r.nome}</span>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-sm">{r.contacto}</td>
+                    <td className="px-4 py-3">
+                      <RoveWhatsappLink value={r.contacto} />
+                    </td>
                     <td className="px-4 py-3 text-sm text-gray-400">
                       {r.servidor ? r.servidor.nome : '—'}
                     </td>
@@ -246,7 +334,7 @@ export default function Revendedores() {
                             setForm({
                               id: r.id,
                               nome: r.nome,
-                              contacto: r.contacto,
+                              contacto: formatWhatsapp(r.contacto),
                               servidorId: r.servidorId,
                               observacoes: r.observacoes ?? '',
                               status: r.status,
@@ -260,7 +348,7 @@ export default function Revendedores() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => remove(r.id)}
+                          onClick={() => setRevendedorToDelete(r)}
                           title="Excluir"
                           className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-red-500/60 bg-red-500/15 text-red-300 hover:bg-red-500/30 hover:text-white shadow-sm shadow-red-900/40 transition-colors"
                         >
@@ -273,17 +361,19 @@ export default function Revendedores() {
               </tbody>
             </table>
           </div>
-          <TablePagination totalItems={list.length} currentPage={tablePageClamped} onPageChange={setTablePage} />
+          <TablePagination totalItems={filteredList.length} currentPage={tablePageClamped} onPageChange={setTablePage} />
           </>
         )}
-        {!loading && list.length === 0 && (
-          <div className="p-8 text-center text-gray-400">Nenhum revendedor. Adicione o primeiro.</div>
+        {!loading && filteredList.length === 0 && (
+          <div className="p-8 text-center text-gray-400">
+            {list.length === 0 ? 'Nenhum revendedor. Adicione o primeiro.' : 'Nenhum revendedor corresponde aos filtros.'}
+          </div>
         )}
       </div>
 
       {/* Modal confirmar suspender */}
       {revendedorSuspender && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <RoveModalOverlay>
           <div className="bg-netflix-card rounded-2xl shadow-2xl border border-amber-500/40 max-w-sm w-full overflow-hidden">
             <div className="p-6 border-b border-netflix-border/80">
               <div className="flex items-center gap-3">
@@ -319,12 +409,63 @@ export default function Revendedores() {
               </button>
             </div>
           </div>
-        </div>
+        </RoveModalOverlay>
+      )}
+
+      {/* Modal confirmar excluir */}
+      {revendedorToDelete && (
+        <RoveModalOverlay>
+          <div className="bg-netflix-card rounded-2xl shadow-2xl border border-red-500/40 max-w-sm w-full overflow-hidden">
+            <div className="p-6 border-b border-netflix-border/80">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-red-500/20 text-red-400 ring-1 ring-red-500/30">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold text-white">Excluir revendedor</h3>
+                  <div className="h-1 w-12 bg-red-500 rounded-full mt-2" />
+                </div>
+              </div>
+            </div>
+            <div className="p-6 space-y-2">
+              <p className="text-sm text-gray-300">
+                Tem a certeza que deseja excluir{' '}
+                <span className="font-medium text-white">{revendedorToDelete.nome}</span>?
+              </p>
+              <p className="text-xs text-gray-500">
+                Os clientes vinculados ficarão sem revendedor. Esta ação não pode ser desfeita.
+              </p>
+              {revendedorToDelete.totalClientes > 0 && (
+                <p className="text-xs text-amber-400/90">
+                  Atenção: <span className="font-semibold">{revendedorToDelete.totalClientes}</span>{' '}
+                  {revendedorToDelete.totalClientes === 1 ? 'cliente está' : 'clientes estão'} associados a este
+                  revendedor.
+                </p>
+              )}
+            </div>
+            <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80">
+              <button
+                type="button"
+                onClick={() => setRevendedorToDelete(null)}
+                className="flex-1 py-2.5 px-4 border border-netflix-border rounded-xl text-sm font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmarExcluir}
+                className="flex-1 py-2.5 px-4 bg-red-600 text-white rounded-xl text-sm font-medium hover:bg-red-700 transition-colors shadow-lg shadow-red-900/30"
+              >
+                Excluir
+              </button>
+            </div>
+          </div>
+        </RoveModalOverlay>
       )}
 
       {/* Modal confirmar ativar */}
       {revendedorAtivar && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <RoveModalOverlay>
           <div className="bg-netflix-card rounded-2xl shadow-2xl border border-green-500/40 max-w-sm w-full overflow-hidden">
             <div className="p-6 border-b border-netflix-border/80">
               <div className="flex items-center gap-3">
@@ -360,103 +501,120 @@ export default function Revendedores() {
               </button>
             </div>
           </div>
-        </div>
+        </RoveModalOverlay>
       )}
 
       {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-netflix-card rounded-2xl shadow-2xl border border-netflix-border max-w-sm w-full overflow-hidden">
-            <div className="p-6 border-b border-netflix-border/80">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-primary-500/20 text-primary-400 ring-1 ring-primary-500/30">
-                  <Store className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-semibold text-white">
+        <RoveModalOverlay>
+          <div className="bg-netflix-card rounded-xl shadow-2xl border border-netflix-border max-w-lg w-full">
+            <div className="border-b border-netflix-border/80 shrink-0 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-lg font-semibold text-white">
                     {modal === 'new' ? 'Novo revendedor' : 'Editar revendedor'}
                   </h3>
-                  <div className="h-1 w-12 bg-primary-500 rounded-full mt-2" />
+                  <div className="h-0.5 w-10 bg-primary-500 rounded-full mt-2" />
                 </div>
+                {modal === 'edit' && (
+                  <div className="w-32 shrink-0 sm:w-36">
+                    <RoveFormLabel required>Estado</RoveFormLabel>
+                    <RoveSelect
+                      compact
+                      required
+                      value={form.status || 'ativo'}
+                      onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
+                    >
+                      <option value="ativo">Ativo</option>
+                      <option value="suspenso">Suspenso</option>
+                    </RoveSelect>
+                  </div>
+                )}
               </div>
             </div>
-            <div className="p-6 space-y-4">
+
+            <div className="p-4 space-y-3">
+              <p className="text-[10px] text-gray-500 pb-0.5">
+                Campos com <span className="text-primary-400">*</span> são obrigatórios.
+              </p>
+
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-0.5">Nome</label>
+                <RoveFormLabel required>Nome</RoveFormLabel>
                 <input
                   type="text"
+                  required
                   value={form.nome || ''}
                   onChange={(e) => setForm((f) => ({ ...f, nome: e.target.value }))}
                   placeholder="Nome do revendedor"
-                  className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                  className={ROVE_FORM_INPUT_SM}
                 />
               </div>
+
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-0.5">Contacto (telefone / WhatsApp)</label>
-                <input
-                  type="text"
+                <RoveFormLabel required>Contacto (WhatsApp)</RoveFormLabel>
+                <WhatsappAoInput
+                  compact
                   value={form.contacto || ''}
-                  onChange={(e) => setForm((f) => ({ ...f, contacto: e.target.value }))}
-                  placeholder="+351 912 345 678"
-                  className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
+                  onChange={(contacto) => setForm((f) => ({ ...f, contacto }))}
+                  required
+                  aria-required="true"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-0.5">Servidor (obrigatório)</label>
-                <select
-                  value={form.servidorId ?? ''}
-                  onChange={(e) => setForm((f) => ({ ...f, servidorId: e.target.value ? Number(e.target.value) : null }))}
-                  className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
-                >
-                  <option value="">Selecione o servidor principal</option>
-                  {servidoresPrincipais.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.nome}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {modal === 'edit' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-0.5">Estado</label>
-                  <select
-                    value={form.status || 'ativo'}
-                    onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
-                    className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
-                  >
-                    <option value="ativo">Ativo</option>
-                    <option value="suspenso">Suspenso</option>
-                  </select>
+
+              <div className="border-t border-netflix-border/60 pt-3">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500 mb-2.5">
+                  Servidor & notas
+                </p>
+                <div className="space-y-3">
+                  <div>
+                    <RoveFormLabel required>Servidor principal</RoveFormLabel>
+                    <RoveSelect
+                      compact
+                      required
+                      value={form.servidorId ?? ''}
+                      onChange={(e) =>
+                        setForm((f) => ({ ...f, servidorId: e.target.value ? Number(e.target.value) : null }))
+                      }
+                    >
+                      <option value="">Selecione o servidor principal</option>
+                      {servidoresPrincipais.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.nome}
+                        </option>
+                      ))}
+                    </RoveSelect>
+                  </div>
+                  <div>
+                    <RoveFormLabel>Observações</RoveFormLabel>
+                    <textarea
+                      value={form.observacoes || ''}
+                      onChange={(e) => setForm((f) => ({ ...f, observacoes: e.target.value }))}
+                      className={`${ROVE_FORM_INPUT_SM} min-h-[4.5rem] resize-none`}
+                      rows={2}
+                      placeholder="Notas opcionais"
+                    />
+                  </div>
                 </div>
-              )}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-0.5">Observações</label>
-                <textarea
-                  value={form.observacoes || ''}
-                  onChange={(e) => setForm((f) => ({ ...f, observacoes: e.target.value }))}
-                  className="w-full px-3 py-2 bg-netflix-panel border border-netflix-border rounded-lg text-sm text-white placeholder-gray-500 resize-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 outline-none"
-                  rows={2}
-                  placeholder="Notas opcionais"
-                />
               </div>
             </div>
-            <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80 bg-netflix-panel/30">
+
+            <div className="flex gap-2 p-4 pt-2 border-t border-netflix-border/80 shrink-0">
               <button
                 type="button"
                 onClick={() => setModal(null)}
-                className="flex-1 py-2.5 px-4 border border-netflix-border rounded-xl text-sm font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
+                className="py-1.5 px-3 border border-netflix-border rounded-lg text-xs font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
               >
                 Cancelar
               </button>
               <button
                 type="button"
                 onClick={save}
-                className="flex-1 py-2.5 px-4 bg-primary-600 text-white rounded-xl text-sm font-medium hover:bg-primary-700 transition-colors shadow-lg shadow-primary-900/30"
+                className="flex-1 py-1.5 px-3 bg-primary-600 text-white rounded-lg text-xs font-medium hover:bg-primary-700 transition-colors shadow-lg shadow-primary-900/30"
               >
                 Guardar
               </button>
             </div>
           </div>
-        </div>
+        </RoveModalOverlay>
       )}
     </motion.div>
   )

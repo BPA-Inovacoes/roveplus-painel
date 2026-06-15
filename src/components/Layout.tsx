@@ -16,18 +16,23 @@ import {
   Bell,
   User,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 
+import { tratamentoNome } from '../utils/tratamento'
+import { defaultPanelPath } from '../lib/panelRoles'
+
+const STAFF_ROLES = ['admin', 'geral', 'netflix', 'iptv', 'suporte'] as const
+
 const nav = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/clientes', icon: Users, label: 'Clientes' },
+  { to: '/', icon: LayoutDashboard, label: 'Dashboard', roles: [...STAFF_ROLES] },
+  { to: '/clientes', icon: Users, label: 'Clientes', roles: [...STAFF_ROLES] },
   { to: '/servidores', icon: Server, label: 'Servidores', roles: ['admin', 'geral', 'iptv', 'suporte'] },
   { to: '/revendedores', icon: Store, label: 'Revendedores', roles: ['admin', 'geral', 'iptv', 'suporte'] },
   { to: '/salas', icon: LayoutGrid, label: 'Salas', roles: ['admin', 'geral', 'netflix', 'suporte'] },
-  { to: '/indicacoes', icon: Gift, label: 'Indicações' },
+  { to: '/indicacoes', icon: Gift, label: 'Indicações', roles: [...STAFF_ROLES] },
   { to: '/utilizadores', icon: UserCog, label: 'Utilizadores', roles: ['admin'] },
-  { to: '/financeiro', icon: DollarSign, label: 'Financeiro', roles: ['admin'] },
+  { to: '/financeiro', icon: DollarSign, label: 'Financeiro', roles: ['admin', 'financeiro'] },
   { to: '/audit', icon: FileText, label: 'Log', roles: ['admin'] },
 ]
 
@@ -37,9 +42,8 @@ const roleLabels: Record<string, string> = {
   netflix: 'Operador Netflix',
   iptv: 'Operador IPTV',
   suporte: 'Suporte',
+  financeiro: 'Financeiro',
 }
-
-import { tratamentoNome } from '../utils/tratamento'
 
 export default function Layout() {
   const location = useLocation()
@@ -50,20 +54,33 @@ export default function Layout() {
 
   async function handleLogout() {
     await logout()
-    navigate('/login', { replace: true })
+    navigate('/', { replace: true })
   }
 
-  const expanded = sidebarHovered
+  // Desktop: mostrar texto ao passar o rato. Mobile: o drawer não tem hover — usar sidebarOpen.
+  const expanded = sidebarHovered || sidebarOpen
+
+  // Mobile: com o drawer aberto, bloquear scroll do body para o gesto ir para a nav lateral.
+  useEffect(() => {
+    if (!sidebarOpen) return
+    const mq = window.matchMedia('(max-width: 1023px)')
+    if (!mq.matches) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [sidebarOpen])
 
   return (
-    <div className="min-h-screen bg-netflix-bg flex">
+    <div className="flex h-[100dvh] min-h-0 w-full flex-col overflow-hidden bg-netflix-bg">
       {/* Sidebar: à esquerda, abre ao passar o rato (desktop) */}
       <aside
         onMouseEnter={() => setSidebarHovered(true)}
         onMouseLeave={() => setSidebarHovered(false)}
-        className={`fixed inset-y-0 left-0 z-40 flex flex-col bg-primary-800/80 backdrop-blur-2xl border-r border-primary-700/60 transition-all duration-300 ease-out ${
+        className={`fixed left-0 top-0 z-40 flex h-[100dvh] max-h-[100dvh] min-h-0 w-64 flex-col overflow-hidden bg-primary-800/80 backdrop-blur-2xl border-r border-primary-700/60 transition-all duration-300 ease-out ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        } lg:translate-x-0 w-64 ${
+        } lg:translate-x-0 ${
           expanded ? 'lg:w-64' : 'lg:w-[4.5rem]'
         }`}
       >
@@ -73,7 +90,7 @@ export default function Layout() {
             expanded ? 'justify-between' : 'justify-between lg:justify-center'
           }`}
         >
-          <Link to="/" className="flex items-center gap-2 min-w-0" onClick={() => setSidebarOpen(false)}>
+          <Link to={defaultPanelPath(user?.role)} className="flex items-center gap-2 min-w-0" onClick={() => setSidebarOpen(false)}>
             <img src="/logo/logo-w.png" alt="Rove+" className="h-6 w-auto shrink-0 object-contain" />
             {expanded && <span className="font-semibold text-white truncate">Rove+</span>}
           </Link>
@@ -88,9 +105,12 @@ export default function Layout() {
         </div>
 
         {/* Nav: ícones só (recolhido) ou ícone + label (expandido) */}
-        <nav className="flex-1 min-h-0 p-2 space-y-0.5 overflow-y-auto overscroll-contain">
+        <nav
+          className="rove-scrollbar min-h-0 flex-1 touch-pan-y space-y-0.5 overflow-y-auto overflow-x-hidden overscroll-y-contain p-2 pb-1 [-webkit-overflow-scrolling:touch] [touch-action:pan-y]"
+          aria-label="Navegação principal"
+        >
           {nav.map((item) => {
-            const allowedRoles = 'roles' in item ? (item as { roles?: string[] }).roles : null
+            const allowedRoles = item.roles
             if (allowedRoles && user?.role && !allowedRoles.includes(user.role)) return null
             const isActive = location.pathname === item.to
             return (
@@ -115,8 +135,8 @@ export default function Layout() {
           })}
         </nav>
 
-        {/* Rodapé: email + Sair */}
-        <div className="p-2 border-t border-primary-700/80 shrink-0">
+        {/* Rodapé: email + Sair (safe-area em telemóveis com barra à base) */}
+        <div className="shrink-0 border-t border-primary-700/80 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))]">
           {expanded && (
             <>
               {user?.nome && (
@@ -151,9 +171,9 @@ export default function Layout() {
         />
       )}
 
-      {/* Main: conteúdo (margem à esquerda no desktop para o menu colapsado) */}
-      <div className="flex-1 flex flex-col min-w-0 lg:pl-[4.5rem]">
-        <header className="h-14 bg-netflix-card/80 backdrop-blur-sm border-b border-netflix-border flex items-center px-4 gap-2 shrink-0">
+      {/* Main: altura limitada + scroll no main (especialmente em mobile) */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col lg:pl-[4.5rem]">
+        <header className="flex h-14 shrink-0 items-center border-b border-netflix-border bg-netflix-card/80 px-4 backdrop-blur-sm gap-2">
           <button
             type="button"
             className="lg:hidden p-2 text-gray-300 rounded-lg hover:bg-white/10"
@@ -194,7 +214,7 @@ export default function Layout() {
             <User className="w-5 h-5" />
           </Link>
         </header>
-        <main className="flex-1 p-4 lg:p-6 overflow-auto">
+        <main className="rove-scrollbar min-h-0 flex-1 touch-pan-y overflow-y-auto overflow-x-hidden overscroll-y-contain p-4 [-webkit-overflow-scrolling:touch] lg:p-6">
           <Outlet />
         </main>
       </div>
