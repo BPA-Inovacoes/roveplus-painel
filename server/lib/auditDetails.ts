@@ -34,6 +34,7 @@ const CLIENT_FIELDS: Record<string, string> = {
   valor: 'mensalidade',
   dataFim: 'data fim',
   dataInicio: 'data início',
+  dataSubscricao: 'data de subscrição',
   status: 'estado',
   inscricaoPaga: 'inscrição',
   perfil: 'perfil',
@@ -58,6 +59,7 @@ export async function loadEntitySnapshot(
             valor: true,
             dataFim: true,
             dataInicio: true,
+            dataSubscricao: true,
             status: true,
             inscricaoPaga: true,
           },
@@ -132,7 +134,7 @@ function diffClientFields(before: Jsonish | null, body: Jsonish): string[] {
     if (key === 'valor') {
       newStr = fmtMoney(rawNew)
       oldStr = fmtMoney(rawOld)
-    } else if (key === 'dataFim' || key === 'dataInicio') {
+    } else if (key === 'dataFim' || key === 'dataInicio' || key === 'dataSubscricao') {
       newStr = fmtDate(rawNew)
       oldStr = fmtDate(rawOld)
     } else if (key === 'inscricaoPaga') {

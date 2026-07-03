@@ -1,11 +1,11 @@
 import { Router } from 'express'
 import bcrypt from 'bcryptjs'
-import type { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma.js'
 import { authMiddleware, getRoleServicoFilter, canAccessServico, canManageClients } from '../middleware/auth.js'
 import type { AuthPayload } from '../middleware/auth.js'
 import { auditLog } from '../middleware/audit.js'
 import { sendWhatsAppMessage, templates, normalizeClientWhatsappKey } from '../services/whatsapp.js'
+import { normalizeWhatsappOptional } from '../lib/validate.js'
 import {
   notifyPanelUsers,
   clientAreaUrl,
@@ -21,6 +21,8 @@ import { ensureClientRoveId, getRoveIdsMap } from '../lib/roveId.js'
 
 const router = Router()
 
+type AnyRecord = Record<string, any>
+
 router.use(authMiddleware)
 
 function stripPortalPinHash<T extends Record<string, unknown>>(c: T) {
@@ -33,6 +35,33 @@ async function ensurePortalFirstLoginColumn(): Promise<void> {
     ALTER TABLE clients
     ADD COLUMN IF NOT EXISTS portal_first_login BOOLEAN NOT NULL DEFAULT false
   `)
+}
+
+async function ensureUniqueClientWhatsapp(whatsapp: string, excludeId?: number): Promise<void> {
+  const key = normalizeClientWhatsappKey(whatsapp)
+  const candidates = await prisma.client.findMany({
+    where: {
+      whatsapp: { contains: key },
+      ...(excludeId ? { NOT: { id: excludeId } } : {}),
+    },
+    select: { id: true, whatsapp: true },
+  })
+  if (candidates.some((client: { id: number; whatsapp: string }) => normalizeClientWhatsappKey(client.whatsapp) === key)) {
+    throw new Error('whatsapp-duplicate')
+  }
+}
+
+async function ensureUniqueClientPerfil(perfil: string, excludeId?: number): Promise<void> {
+  const existing = await prisma.client.findFirst({
+    where: {
+      perfil: { equals: perfil, mode: 'insensitive' },
+      ...(excludeId ? { NOT: { id: excludeId } } : {}),
+    },
+    select: { id: true },
+  })
+  if (existing) {
+    throw new Error('perfil-duplicate')
+  }
 }
 
 /** Adiciona N meses à data fim atual (mantém o dia; renovar = +1 mês, +2 meses, etc.). */
@@ -58,7 +87,7 @@ router.get('/', async (req, res) => {
     data: { status: 'vencido' },
   })
 
-  const where: Prisma.ClientWhereInput = {}
+  const where: AnyRecord = {}
   if (roleFilter) where.servico = roleFilter
   else if (servico) where.servico = String(servico)
   if (servidorId) where.servidorId = Number(servidorId)
@@ -98,7 +127,7 @@ router.get('/', async (req, res) => {
   const qTerm = typeof q === 'string' ? q.trim() : ''
   if (qTerm) {
     const digits = qTerm.replace(/\D/g, '')
-    const or: Prisma.ClientWhereInput[] = [
+    const or: AnyRecord[] = [
       { nome: { contains: qTerm, mode: 'insensitive' } },
       { whatsapp: { contains: qTerm } },
       { localizacao: { contains: qTerm, mode: 'insensitive' } },
@@ -121,10 +150,10 @@ router.get('/', async (req, res) => {
     orderBy: { dataFim: 'asc' },
   })
   const [pinPlainById, roveById] = await Promise.all([
-    includePortalPin ? getPortalPinPlainMap(clients.map((c) => c.id)) : Promise.resolve(null),
-    getRoveIdsMap(clients.map((c) => c.id)),
+    includePortalPin ? getPortalPinPlainMap(clients.map((c: { id: number }) => c.id)) : Promise.resolve(null),
+    getRoveIdsMap(clients.map((c: { id: number }) => c.id)),
   ])
-  const enriched = clients.map((c) => {
+  const enriched = clients.map((c: { id: number; portalPinHash: string | null; [key: string]: unknown }) => {
     const areaClienteAtiva = !!c.portalPinHash
     const base = stripPortalPinHash({ ...c, valor: Number(c.valor) } as Record<string, unknown>)
     const fromDb = pinPlainById?.get(Number(c.id))
@@ -163,6 +192,38 @@ router.post('/', auditLog('create_client', 'client'), async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
   if (!canManageClients(user.role)) return res.status(403).json({ error: 'Sem permissão para criar clientes' })
   const body = req.body
+  const whatsapp = normalizeWhatsappOptional(body.whatsapp)
+  if (body.whatsapp != null && String(body.whatsapp).trim() !== '' && whatsapp === null) {
+    return res.status(400).json({ error: 'Telefone inválido' })
+  }
+  const perfil = body.perfil != null ? String(body.perfil).trim() : null
+  if (perfil !== null && perfil !== '' && perfil.length < 2) {
+    return res.status(400).json({ error: 'Perfil inválido' })
+  }
+  const pin = body.pin != null ? String(body.pin).trim() : null
+  if (pin !== null && pin !== '' && pin.length < 4) {
+    return res.status(400).json({ error: 'PIN inválido' })
+  }
+  if (whatsapp) {
+    try {
+      await ensureUniqueClientWhatsapp(whatsapp)
+    } catch (err) {
+      if (err instanceof Error && err.message === 'whatsapp-duplicate') {
+        return res.status(400).json({ error: 'Contacto já existe' })
+      }
+      throw err
+    }
+  }
+  if (perfil) {
+    try {
+      await ensureUniqueClientPerfil(perfil)
+    } catch (err) {
+      if (err instanceof Error && err.message === 'perfil-duplicate') {
+        return res.status(400).json({ error: 'Perfil já existe' })
+      }
+      throw err
+    }
+  }
   const servico = body.servico || 'iptv'
   if (!canAccessServico(user.role, servico)) return res.status(403).json({ error: 'Sem permissão para criar cliente deste serviço' })
   let dataFim = body.dataFim ? new Date(body.dataFim) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
@@ -183,18 +244,19 @@ router.post('/', auditLog('create_client', 'client'), async (req, res) => {
   const client = await prisma.client.create({
     data: {
       nome: body.nome,
-      whatsapp: body.whatsapp,
+      whatsapp: whatsapp ?? body.whatsapp,
       localizacao: body.localizacao || null,
       servico,
       plano: body.plano || 'mensal',
       servidorId: body.servidorId ? Number(body.servidorId) : null,
       revendedorId: body.revendedorId ? Number(body.revendedorId) : null,
-      perfil: body.perfil || null,
-      pin: body.pin || null,
+      perfil: perfil || null,
+      pin: pin || null,
       iptvUser: body.iptvUser || null,
       iptvPass: body.iptvPass || null,
       iptvMac: body.iptvMac || null,
       iptvM3u: body.iptvM3u || null,
+      dataSubscricao: body.dataSubscricao ? new Date(body.dataSubscricao) : new Date(),
       dataInicio: body.dataInicio ? new Date(body.dataInicio) : new Date(),
       dataFim,
       valor: Number(body.valor) || 0,
@@ -244,6 +306,38 @@ router.patch('/:id', auditLog('update_client', 'client'), async (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Cliente não encontrado' })
   if (!canAccessServico(user.role, existing.servico)) return res.status(403).json({ error: 'Sem acesso a este cliente' })
   const body = req.body
+  if (body.whatsapp != null) {
+    const whatsapp = normalizeWhatsappOptional(body.whatsapp)
+    if (body.whatsapp != null && String(body.whatsapp).trim() !== '' && whatsapp === null) {
+      return res.status(400).json({ error: 'Telefone inválido' })
+    }
+    if (whatsapp) {
+      try {
+        await ensureUniqueClientWhatsapp(whatsapp, id)
+      } catch (err) {
+        if (err instanceof Error && err.message === 'whatsapp-duplicate') {
+          return res.status(400).json({ error: 'Contacto já existe' })
+        }
+        throw err
+      }
+    }
+  }
+  if (body.perfil != null) {
+    const perfil = String(body.perfil).trim()
+    if (perfil !== '' && perfil.length < 2) {
+      return res.status(400).json({ error: 'Perfil inválido' })
+    }
+    if (perfil !== '') {
+      try {
+        await ensureUniqueClientPerfil(perfil, id)
+      } catch (err) {
+        if (err instanceof Error && err.message === 'perfil-duplicate') {
+          return res.status(400).json({ error: 'Perfil já existe' })
+        }
+        throw err
+      }
+    }
+  }
   if (user.role === 'financeiro') {
     const keys = Object.keys(body).filter((k) => body[k] !== undefined)
     if (keys.length !== 1 || keys[0] !== 'inscricaoPaga') {
@@ -253,7 +347,7 @@ router.patch('/:id', auditLog('update_client', 'client'), async (req, res) => {
     return res.status(403).json({ error: 'Sem permissão para alterar clientes' })
   }
   if (body.servico != null && !canAccessServico(user.role, body.servico)) return res.status(403).json({ error: 'Sem permissão para este serviço' })
-  const data: Prisma.ClientUncheckedUpdateInput = {}
+  const data: AnyRecord = {}
   if (body.nome != null) data.nome = body.nome
   if (body.whatsapp != null) data.whatsapp = body.whatsapp
   if (body.localizacao !== undefined) data.localizacao = body.localizacao || null
@@ -267,6 +361,7 @@ router.patch('/:id', auditLog('update_client', 'client'), async (req, res) => {
   if (body.iptvPass != null) data.iptvPass = body.iptvPass
   if (body.iptvMac != null) data.iptvMac = body.iptvMac
   if (body.iptvM3u != null) data.iptvM3u = body.iptvM3u
+  if (body.dataSubscricao != null) data.dataSubscricao = new Date(body.dataSubscricao)
   if (body.dataInicio != null) data.dataInicio = new Date(body.dataInicio)
   if (body.dataFim != null) {
     const newDataFim = new Date(body.dataFim)
@@ -440,6 +535,28 @@ router.post('/:id/marcar-pago', auditLog('mark_paid_client', 'client'), async (r
   })
 })
 
+router.post('/:id/inativar', auditLog('suspend_client', 'client'), async (req, res) => {
+  const user = (req as unknown as { user: AuthPayload }).user
+  if (!canManageClients(user.role)) return res.status(403).json({ error: 'Sem permissão para inativar clientes' })
+  const id = Number(req.params.id)
+  const existing = await prisma.client.findUnique({ where: { id } })
+  if (!existing) return res.status(404).json({ error: 'Cliente não encontrado' })
+  if (!canAccessServico(user.role, existing.servico)) return res.status(403).json({ error: 'Sem acesso a este cliente' })
+  if (existing.status === 'inativo') return res.status(400).json({ error: 'Cliente já está inativo.' })
+  const updated = await prisma.client.update({
+    where: { id },
+    data: { status: 'inativo', whatsappNotificadoVencimentoAt: new Date() },
+  })
+  void notifyPanelUsers(
+    updated.servico === 'netflix' ? 'clientes_netflix' : 'clientes_iptv',
+    `Cliente inativado: ${updated.nome} (${updated.whatsapp}).`
+  )
+  res.json({
+    ...stripPortalPinHash({ ...updated, valor: Number(updated.valor) } as Record<string, unknown>),
+    areaClienteAtiva: !!updated.portalPinHash,
+  })
+})
+
 router.post('/:id/suspender', auditLog('suspend_client', 'client'), async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
   if (!canManageClients(user.role)) return res.status(403).json({ error: 'Sem permissão para suspender clientes' })
@@ -447,18 +564,13 @@ router.post('/:id/suspender', auditLog('suspend_client', 'client'), async (req, 
   const existing = await prisma.client.findUnique({ where: { id } })
   if (!existing) return res.status(404).json({ error: 'Cliente não encontrado' })
   if (!canAccessServico(user.role, existing.servico)) return res.status(403).json({ error: 'Sem acesso a este cliente' })
-  if (existing.status === 'vencido') return res.status(400).json({ error: 'Cliente já está vencido.' })
   const updated = await prisma.client.update({
     where: { id },
-    data: { status: 'vencido', whatsappNotificadoVencimentoAt: new Date() },
-  })
-  const msg = templates.servicoSuspenso(updated.nome)
-  void sendWhatsAppMessage(updated.whatsapp, msg).catch((err) => {
-    console.error('[WhatsApp] Falha ao notificar suspensão:', updated.whatsapp, err)
+    data: { status: 'inativo', whatsappNotificadoVencimentoAt: new Date() },
   })
   void notifyPanelUsers(
     updated.servico === 'netflix' ? 'clientes_netflix' : 'clientes_iptv',
-    `Cliente suspenso: ${updated.nome} (${updated.whatsapp}).`
+    `Cliente inativado: ${updated.nome} (${updated.whatsapp}).`
   )
   res.json({
     ...stripPortalPinHash({ ...updated, valor: Number(updated.valor) } as Record<string, unknown>),

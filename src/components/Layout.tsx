@@ -25,7 +25,7 @@ import { defaultPanelPath } from '../lib/panelRoles'
 const STAFF_ROLES = ['admin', 'geral', 'netflix', 'iptv', 'suporte'] as const
 
 const nav = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard', roles: [...STAFF_ROLES] },
+  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', roles: [...STAFF_ROLES] },
   { to: '/clientes', icon: Users, label: 'Clientes', roles: [...STAFF_ROLES] },
   { to: '/servidores', icon: Server, label: 'Servidores', roles: ['admin', 'geral', 'iptv', 'suporte'] },
   { to: '/revendedores', icon: Store, label: 'Revendedores', roles: ['admin', 'geral', 'iptv', 'suporte'] },

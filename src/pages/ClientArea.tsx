@@ -45,6 +45,7 @@ export interface ClientPortalMe {
   servico: string
   plano: string
   status: string
+  dataSubscricao: string
   dataInicio: string
   dataFim: string
   valor: number
@@ -834,6 +835,7 @@ export default function ClientArea() {
                 <InfoRow label="Plano">{me.plano}</InfoRow>
                 <InfoRow label="Serviço">{me.servico === 'netflix' ? 'Netflix' : 'IPTV'}</InfoRow>
                 <InfoRow label="Valor mensal">{Number(me.valor).toLocaleString('pt-BR')} kz</InfoRow>
+                <InfoRow label="Subscrição">{formatDate(me.dataSubscricao)}</InfoRow>
                 <InfoRow label="Início">{formatDate(me.dataInicio)}</InfoRow>
                 <InfoRow label="Indicações">{me.indicacoes ?? 0}</InfoRow>
               </section>

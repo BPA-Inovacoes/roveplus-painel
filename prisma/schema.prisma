@@ -45,6 +45,7 @@ model Client {
   iptvPass    String?
   iptvMac     String?
   iptvM3u     String?
+  dataSubscricao DateTime @default(now()) @map("data_subscricao") // data em que o cliente subscreveu o serviço (mantém-se em renovações)
   dataInicio  DateTime  @map("data_inicio")
   dataFim     DateTime  @map("data_fim")
   valor         Decimal   @db.Decimal(10, 2)  // preço mensal

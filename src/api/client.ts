@@ -29,7 +29,7 @@ async function request<T>(
         window.location.href = '/'
       }
     } else if (!isClientLoginPath(loc) && !isPanelLoginPath(loc)) {
-      window.location.href = '/'
+      window.location.href = '/login'
     }
     throw new Error('Não autorizado')
   }

@@ -17,6 +17,7 @@ import {
   Check,
   Eye,
   EyeOff,
+  Ban,
 } from 'lucide-react'
 import { RoveDatePicker } from '../components/RoveDatePicker'
 import { RoveSelect } from '../components/RoveSelect'
@@ -41,6 +42,7 @@ interface Client {
   revendedorId: number | null
   perfil: string | null
   pin?: string | null
+  dataSubscricao: string
   dataInicio: string
   dataFim: string
   valor: number
@@ -78,6 +80,14 @@ const statusColors: Record<string, string> = {
   ativo: 'bg-green-900/50 text-green-300',
   vencido: 'bg-red-900/50 text-red-300',
   cancelado: 'bg-gray-700 text-gray-300',
+  inativo: 'bg-amber-900/50 text-amber-300',
+}
+
+const statusLabels: Record<string, string> = {
+  ativo: 'Ativo',
+  vencido: 'Vencido',
+  cancelado: 'Cancelado',
+  inativo: 'Inativo',
 }
 
 /** Planos IPTV (só o nome no select; valor = mensalidade) */
@@ -180,6 +190,7 @@ export default function Clientes() {
   const [clientRenovar, setClientRenovar] = useState<Client | null>(null)
   const [renovarMeses, setRenovarMeses] = useState<number | ''>('')
   const [tablePage, setTablePage] = useState(1)
+  const [saving, setSaving] = useState(false)
   const servicoInicial = (servicoFixo ?? 'iptv') as 'iptv' | 'netflix'
   const planoInicial = planoPredefinido(servicoInicial)
   const [form, setForm] = useState<
@@ -257,6 +268,7 @@ export default function Clientes() {
   const stats = {
     total: clients.length,
     ativos: clients.filter((c) => c.status === 'ativo').length,
+    inativos: clients.filter((c) => c.status === 'inativo').length,
     vencidos: clients.filter((c) => c.status === 'vencido').length,
     vencendo: clients.filter((c) => {
       const d = daysUntil(c.dataFim)
@@ -329,6 +341,7 @@ export default function Clientes() {
         return
       }
     }
+    setSaving(true)
     try {
       if (modal === 'new') {
         const body: Record<string, unknown> = {
@@ -342,7 +355,8 @@ export default function Clientes() {
         delete body.areaClienteAtiva
         delete body.removerPinPortal
         body.portalPin = String(form.portalPin).trim()
-        await api.post<Client>('/api/clients', body)
+        await api.post<Client>('/api/clients', body);
+
       } else if (form.id) {
         const patch: Record<string, unknown> = { ...form, salaId: form.salaId ?? null }
         delete patch.areaClienteAtiva
@@ -372,6 +386,8 @@ export default function Clientes() {
       load()
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Erro ao guardar')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -395,11 +411,11 @@ export default function Clientes() {
   async function confirmarSuspender() {
     if (!clientSuspender) return
     try {
-      await api.post(`/api/clients/${clientSuspender.id}/suspender`)
+      await api.post(`/api/clients/${clientSuspender.id}/inativar`)
       setClientSuspender(null)
       load()
     } catch (e) {
-      showError(e instanceof Error ? e.message : 'Erro')
+      showError(e instanceof Error ? e.message : 'Erro ao inativar cliente')
     }
   }
 
@@ -497,6 +513,9 @@ export default function Clientes() {
           </span>
           <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-900/30 border border-green-700/40 text-green-300 text-sm">
             <span className="font-semibold">{stats.ativos}</span> ativos
+          </span>
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-900/30 border border-amber-700/40 text-amber-300 text-sm">
+            <span className="font-semibold">{stats.inativos}</span> inativos
           </span>
           <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-900/30 border border-amber-700/40 text-amber-300 text-sm">
             <span className="font-semibold">{stats.vencendo}</span> a vencer (7 dias)
@@ -615,10 +634,22 @@ export default function Clientes() {
           >
             <option value="">Todos os estados</option>
             <option value="ativo">Ativo</option>
+            <option value="inativo">Inativo</option>
             <option value="vencido">Vencido</option>
             <option value="cancelado">Cancelado</option>
           </RoveSelect>
         </div>
+        <button
+          type="button"
+          onClick={() => setFilter((f) => ({ ...f, status: f.status === 'inativo' ? '' : 'inativo' }))}
+          className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+            filter.status === 'inativo'
+              ? 'border-amber-500/60 bg-amber-500/15 text-amber-200'
+              : 'border-netflix-border bg-netflix-panel text-gray-300 hover:bg-netflix-hover hover:text-white'
+          }`}
+        >
+          {filter.status === 'inativo' ? 'Ver todos' : 'Área inativos'}
+        </button>
         <div className="w-44 min-w-[11rem]">
           <RoveSelect
             compact
@@ -662,6 +693,11 @@ export default function Clientes() {
           </div>
         ) : (
           <>
+          {filter.status === 'inativo' && (
+            <div className="border-b border-amber-500/30 bg-amber-950/20 px-4 py-3 text-sm text-amber-100">
+              Área de clientes inativos — ficam visíveis aqui até serem reativados.
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead className="bg-netflix-panel/80 text-gray-300 text-sm">
@@ -680,6 +716,7 @@ export default function Clientes() {
                   )}
                   {tab === 'netflix' && <th className="px-4 py-3.5 font-medium">Sala</th>}
                   <th className="px-4 py-3.5 font-medium">Plano</th>
+                  <th className="px-4 py-3.5 font-medium">Subscrição</th>
                   {tab === 'iptv' && <th className="px-4 py-3.5 font-medium">Data fim</th>}
                   {tab === 'netflix' && <th className="px-4 py-3.5 font-medium">Data renovação</th>}
                   <th className="px-4 py-3.5 font-medium">Valor</th>
@@ -732,6 +769,9 @@ export default function Clientes() {
                         </td>
                       )}
                       <td className="px-4 py-3 text-sm">{c.plano}</td>
+                      <td className="px-4 py-3 text-sm text-gray-300">
+                        {c.dataSubscricao ? formatDate(c.dataSubscricao) : '—'}
+                      </td>
                       {tab === 'iptv' && (
                         <td className="px-4 py-3">
                           <span className={`text-sm ${urgent ? 'text-amber-300 font-semibold' : alert ? 'text-amber-400 font-medium' : expired ? 'text-red-400 font-medium' : 'text-gray-300'}`}>
@@ -759,7 +799,7 @@ export default function Clientes() {
                       <td className="px-4 py-3 text-sm font-medium text-white">{Number(c.valor).toFixed(2)} kz</td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${statusColors[c.status] || 'bg-gray-700 text-gray-300'}`}>
-                          {c.status}
+                          {statusLabels[c.status] || c.status}
                         </span>
                       </td>
                       <td className="px-4 py-3 relative">
@@ -778,7 +818,7 @@ export default function Clientes() {
                               <LayoutGrid className="w-4 h-4" />
                             </button>
                           )}
-                          {c.status === 'ativo' && (
+                          {(c.status === 'ativo' || c.status === 'vencido') && (
                             <button
                               type="button"
                               onClick={() => {
@@ -796,34 +836,34 @@ export default function Clientes() {
                               <Edit2 className="w-4 h-4" />
                             </button>
                           )}
-                          {c.status === 'ativo' && (
+                          {c.status === 'vencido' && (
                             <button
                               type="button"
                               onClick={() => {
                                 setClientRenovar(c)
                                 setRenovarMeses('')
                               }}
-                              title="Renovar (vencimento dia 11)"
+                              title="Renovar"
                               className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-green-500/50 bg-green-500/10 text-green-300 hover:bg-green-500/30 hover:text-white transition-colors"
                             >
                               <RefreshCw className="w-4 h-4" />
                             </button>
                           )}
-                          {c.status === 'ativo' && (
-                            <button
-                              type="button"
-                              onClick={() => setClientSuspender(c)}
-                              title="Suspender"
-                              className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-amber-500/50 bg-amber-500/10 text-amber-300 hover:bg-amber-500/30 hover:text-white transition-colors"
-                            >
-                              <AlertTriangle className="w-4 h-4" />
-                            </button>
-                          )}
                           {c.status === 'vencido' && (
                             <button
                               type="button"
+                              onClick={() => setClientSuspender(c)}
+                              title="Inativar"
+                              className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-amber-500/50 bg-amber-500/10 text-amber-300 hover:bg-amber-500/30 hover:text-white transition-colors"
+                            >
+                              <Ban className="w-4 h-4" />
+                            </button>
+                          )}
+                          {c.status === 'inativo' && (
+                            <button
+                              type="button"
                               onClick={() => setClientAtivar(c)}
-                              title="Ativar"
+                              title="Reativar"
                               className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-green-500/50 bg-green-500/10 text-green-300 hover:bg-green-500/30 hover:text-white transition-colors"
                             >
                               <CheckCircle className="w-4 h-4" />
@@ -859,7 +899,7 @@ export default function Clientes() {
         )}
       </div>
 
-      {/* Modal confirmar suspender */}
+      {/* Modal confirmar inativar */}
       {clientSuspender && (
         <RoveModalOverlay>
           <div className="bg-netflix-card rounded-2xl shadow-2xl border border-amber-500/30 max-w-md w-full overflow-hidden">
@@ -869,16 +909,16 @@ export default function Clientes() {
                   <AlertTriangle className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="text-xl font-semibold text-white">Suspender cliente</h3>
+                  <h3 className="text-xl font-semibold text-white">Inativar cliente</h3>
                   <p className="text-sm text-gray-400 mt-0.5">
-                    O cliente <span className="text-white font-medium">{clientSuspender.nome}</span> passará a estado <span className="text-amber-400 font-medium">vencido</span>.
+                    O cliente <span className="text-white font-medium">{clientSuspender.nome}</span> passará a estado <span className="text-amber-400 font-medium">inativo</span>.
                   </p>
                 </div>
               </div>
               <div className="h-1 w-12 bg-amber-500 rounded-full mt-4" />
             </div>
             <div className="p-6">
-              <p className="text-sm text-gray-300">Tem a certeza que deseja suspender este cliente?</p>
+              <p className="text-sm text-gray-300">Tem a certeza que deseja inativar este cliente?</p>
             </div>
             <div className="flex gap-3 p-6 pt-0 border-t border-netflix-border/80">
               <button
@@ -893,7 +933,7 @@ export default function Clientes() {
                 onClick={confirmarSuspender}
                 className="flex-1 py-2.5 px-4 bg-amber-600 text-white rounded-xl text-sm font-medium hover:bg-amber-700 transition-colors shadow-lg shadow-amber-900/30"
               >
-                Suspender
+                Inativar
               </button>
             </div>
           </div>
@@ -1153,6 +1193,7 @@ export default function Clientes() {
                       onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
                     >
                       <option value="ativo">Ativo</option>
+                      <option value="inativo">Inativo</option>
                       <option value="vencido">Vencido</option>
                       <option value="cancelado">Cancelado</option>
                     </RoveSelect>
@@ -1501,6 +1542,21 @@ export default function Clientes() {
                         />
                       </div>
                     )}
+                    <div>
+                      <label
+                        className={`block font-medium text-gray-300 ${compactClientForm ? 'text-xs mb-1' : 'text-sm mb-0.5'}`}
+                      >
+                        Data de subscrição
+                      </label>
+                      <RoveDatePicker
+                        compact={compactClientForm}
+                        allowPastDates
+                        value={form.dataSubscricao ? String(form.dataSubscricao).slice(0, 10) : ''}
+                        onChange={(dataSubscricao) => setForm((f) => ({ ...f, dataSubscricao }))}
+                        title="Data em que o cliente subscreveu o serviço"
+                        placeholder="Selecionar data"
+                      />
+                    </div>
                     {(() => {
                       const valorBloqueado =
                         (form.servico === 'iptv' && PLANOS_IPTV.some((p) => p.id === form.plano)) ||
@@ -1656,11 +1712,12 @@ export default function Clientes() {
               <button
                 type="button"
                 onClick={saveClient}
-                className={`flex-1 bg-primary-600 text-white font-medium hover:bg-primary-700 transition-colors shadow-lg shadow-primary-900/30 ${
+                disabled={saving}
+                className={`flex-1 bg-primary-600 text-white font-medium hover:bg-primary-700 transition-colors shadow-lg shadow-primary-900/30 disabled:opacity-50 disabled:pointer-events-none ${
                   compactClientForm ? 'py-1.5 px-3 rounded-lg text-xs' : 'py-2.5 px-4 rounded-xl text-sm'
                 }`}
               >
-                Guardar
+                {saving ? 'A guardar...' : 'Guardar'}
               </button>
             </div>
           </div>

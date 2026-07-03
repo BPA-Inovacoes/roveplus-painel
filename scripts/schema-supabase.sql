@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS "clients" (
   "iptvPass" TEXT,
   "iptvMac" TEXT,
   "iptvM3u" TEXT,
+  "data_subscricao" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "data_inicio" TIMESTAMP(3) NOT NULL,
   "data_fim" TIMESTAMP(3) NOT NULL,
   "valor" DECIMAL(10,2) NOT NULL,
@@ -65,3 +66,17 @@ CREATE TABLE IF NOT EXISTS "audit_logs" (
 CREATE INDEX IF NOT EXISTS "clients_servidorId_idx" ON "clients"("servidorId");
 CREATE INDEX IF NOT EXISTS "indicacoes_indicador_id_idx" ON "indicacoes"("indicador_id");
 CREATE INDEX IF NOT EXISTS "audit_logs_user_id_idx" ON "audit_logs"("user_id");
+
+-- Migração idempotente: adiciona data_subscricao a bases existentes e retropreenche com data_inicio
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'clients' AND column_name = 'data_subscricao'
+  ) THEN
+    ALTER TABLE "clients" ADD COLUMN "data_subscricao" TIMESTAMP(3);
+    UPDATE "clients" SET "data_subscricao" = "data_inicio";
+    ALTER TABLE "clients" ALTER COLUMN "data_subscricao" SET NOT NULL;
+    ALTER TABLE "clients" ALTER COLUMN "data_subscricao" SET DEFAULT CURRENT_TIMESTAMP;
+  END IF;
+END $$;

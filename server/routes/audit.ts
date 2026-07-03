@@ -1,10 +1,11 @@
 import { Router } from 'express'
-import type { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma.js'
 import { AUDIT_ACTION_LABELS, AUDIT_ENTITY_LABELS } from '../lib/auditLog.js'
 import { authMiddleware, requireAdmin } from '../middleware/auth.js'
 
 const router = Router()
+
+type AnyRecord = Record<string, any>
 
 router.use(authMiddleware)
 router.use(requireAdmin)
@@ -18,13 +19,13 @@ router.get('/meta', (_req, res) => {
 
 router.get('/', async (req, res) => {
   const { entity, action, userId, from, to, q, limit = '200', offset = '0' } = req.query
-  const where: Prisma.AuditLogWhereInput = {}
+  const where: AnyRecord = {}
 
   if (entity && String(entity).trim()) where.entity = String(entity).trim()
   if (action && String(action).trim()) where.action = String(action).trim()
   if (userId != null && String(userId).trim()) where.userId = Number(userId)
 
-  const createdAt: Prisma.DateTimeFilter = {}
+  const createdAt: AnyRecord = {}
   if (from != null && String(from).trim()) {
     const d = new Date(String(from))
     if (!isNaN(d.getTime())) createdAt.gte = d

@@ -175,6 +175,7 @@ router.get('/me', clientPortalMiddleware, async (req, res) => {
     servico: client.servico,
     plano: client.plano,
     status: client.status,
+    dataSubscricao: client.dataSubscricao,
     dataInicio: client.dataInicio,
     dataFim: client.dataFim,
     valor: Number(client.valor),
