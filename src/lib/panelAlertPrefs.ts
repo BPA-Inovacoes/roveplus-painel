@@ -1,9 +1,7 @@
 export const PANEL_ALERT_CATEGORIES = [
   'clientes_netflix',
-  'clientes_iptv',
   'financeiro',
   'salas',
-  'servidores',
   'indicacoes',
   'utilizadores',
   'resumo',
@@ -20,11 +18,6 @@ export const PANEL_ALERT_META: Record<
     description: 'Cadastro, suspensão, reativação e cancelamento',
     group: 'clientes',
   },
-  clientes_iptv: {
-    label: 'Clientes IPTV',
-    description: 'Cadastro, suspensão, reativação e cancelamento',
-    group: 'clientes',
-  },
   financeiro: {
     label: 'Financeiro',
     description: 'Inscrições, pagamentos e cobranças',
@@ -33,11 +26,6 @@ export const PANEL_ALERT_META: Record<
   salas: {
     label: 'Salas Netflix',
     description: 'Novas salas, renovações e suspensões',
-    group: 'operacao',
-  },
-  servidores: {
-    label: 'Servidores e revendedores',
-    description: 'IPTV, manutenção e revendedores',
     group: 'operacao',
   },
   indicacoes: {
@@ -66,14 +54,10 @@ export function defaultAlertScopesForRole(role: string): PanelAlertCategory[] {
       return ['financeiro', 'resumo']
     case 'netflix':
       return ['clientes_netflix', 'salas', 'resumo']
-    case 'iptv':
-      return ['clientes_iptv', 'servidores', 'resumo']
     case 'geral':
       return [
         'clientes_netflix',
-        'clientes_iptv',
         'salas',
-        'servidores',
         'indicacoes',
         'resumo',
       ]

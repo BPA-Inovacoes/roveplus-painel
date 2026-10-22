@@ -2,14 +2,16 @@ import { useState } from 'react'
 import { RoveModalOverlay } from '../components/RoveModalOverlay'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { LogIn, Phone, KeyRound, Shield, Sparkles, LifeBuoy, Globe, ExternalLink } from 'lucide-react'
+import { LogIn, Phone, KeyRound, Shield, Sparkles, LifeBuoy, Globe, ExternalLink, Eye, EyeOff } from 'lucide-react'
 import { ROVE_PUBLIC_SITE_URL } from '../lib/roveSite'
 import { useClientPortal } from '../contexts/ClientPortalContext'
 import { clientPortalApi } from '../api/clientPortal'
+import { LoadingButton } from '../components/LoadingButton'
 
 export default function ClienteLogin() {
   const [whatsapp, setWhatsapp] = useState('')
   const [pin, setPin] = useState('')
+  const [showPin, setShowPin] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [showRecover, setShowRecover] = useState(false)
@@ -159,25 +161,35 @@ export default function ClienteLogin() {
                   <KeyRound className="absolute left-3.5 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-primary-500/70 pointer-events-none group-focus-within:text-primary-400 transition-colors" />
                   <input
                     id="cl-pin"
-                    type="password"
+                    type={showPin ? 'text' : 'password'}
                     autoComplete="current-password"
                     value={pin}
                     onChange={(e) => setPin(e.target.value)}
-                    className="w-full pl-11 pr-4 py-3.5 bg-netflix-panel/90 border border-netflix-border rounded-xl text-white placeholder-gray-500 text-[15px] focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500/60 outline-none transition-shadow tracking-widest"
+                    className="w-full pl-11 pr-12 py-3.5 bg-netflix-panel/90 border border-netflix-border rounded-xl text-white placeholder-gray-500 text-[15px] focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500/60 outline-none transition-shadow tracking-widest"
                     placeholder="••••••"
                     required
                     minLength={4}
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPin((v) => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+                    aria-label={showPin ? 'Ocultar PIN' : 'Mostrar PIN'}
+                    aria-pressed={showPin}
+                    title={showPin ? 'Ocultar PIN' : 'Mostrar PIN'}
+                  >
+                    {showPin ? <EyeOff className="w-[18px] h-[18px]" /> : <Eye className="w-[18px] h-[18px]" />}
+                  </button>
                 </div>
               </div>
-              <button
+              <LoadingButton
                 type="submit"
-                disabled={loading}
+                loading={loading}
                 className="w-full flex items-center justify-center gap-2.5 py-3.5 px-4 mt-2 bg-gradient-to-b from-primary-600 to-primary-700 hover:from-primary-500 hover:to-primary-600 text-white font-semibold rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-primary-900/40 border border-primary-500/20"
               >
-                <LogIn className="w-5 h-5" />
+                {!loading && <LogIn className="w-5 h-5" />}
                 {loading ? 'A entrar…' : 'Entrar na área cliente'}
-              </button>
+              </LoadingButton>
             </form>
 
             <div className="mt-4 flex justify-end">
@@ -261,13 +273,13 @@ export default function ClienteLogin() {
                 >
                   Fechar
                 </button>
-                <button
+                <LoadingButton
                   type="submit"
-                  disabled={recoverLoading}
+                  loading={recoverLoading}
                   className="flex-1 py-2.5 px-4 bg-primary-600 text-white rounded-xl text-sm font-medium hover:bg-primary-700 disabled:opacity-50 transition-colors shadow-lg shadow-primary-900/30"
                 >
                   {recoverLoading ? 'A enviar…' : 'Enviar PIN'}
-                </button>
+                </LoadingButton>
               </div>
             </form>
           </div>

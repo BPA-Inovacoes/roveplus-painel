@@ -4,8 +4,6 @@ import {
   BookOpen,
   LayoutDashboard,
   Users,
-  Server,
-  Store,
   LayoutGrid,
   Gift,
   UserCog,
@@ -33,16 +31,16 @@ const SECOES: Secao[] = [
       {
         titulo: 'O que é o Dashboard',
         passos: [
-          'O Dashboard mostra métricas em tempo real: total de clientes IPTV e Netflix, receita do mês, vencimentos próximos e indicações pendentes.',
+          'O Dashboard mostra métricas em tempo real: total de clientes Netflix, receita do mês, vencimentos próximos e indicações pendentes.',
           'Os cards principais mostram: total de clientes, receita do mês, clientes vencidos, vencimentos hoje e em 7 dias.',
           'A secção de indicações mostra total, pendentes e confirmadas.',
-          'Os gráficos mostram: distribuição por servidor, receita dos últimos meses e clientes novos.',
+          'Os gráficos mostram: clientes por estado, clientes por sala e receita dos últimos meses.',
         ],
       },
       {
         titulo: 'Como interpretar os dados',
         passos: [
-          'Clique nos cards de navegação rápida para ir diretamente para Clientes, Revendedores, Salas ou Indicações.',
+          'Clique nos cards de navegação rápida para ir diretamente para Clientes, Salas ou Indicações.',
           'O gráfico de receita mostra a evolução mensal.',
           'Clientes vencidos e cancelados aparecem destacados para ação rápida.',
         ],
@@ -53,16 +51,14 @@ const SECOES: Secao[] = [
     id: 'clientes',
     icon: Users,
     titulo: 'Clientes',
-    desc: 'Gestão de clientes IPTV e Netflix. Crie, edite, renove, suspenda ou ative. Filtre por servidor, revendedor, sala e estado.',
+    desc: 'Gestão de clientes Netflix. Crie, edite, registe pagamentos, suspenda ou ative. Filtre por sala, estado e vencimento.',
     detalhes: [
       {
         titulo: 'Criar novo cliente',
         passos: [
           'Clique no botão "+ Novo cliente".',
-          'Selecione o serviço: IPTV ou Netflix.',
-          'Preencha os campos obrigatórios: nome, WhatsApp, localização, plano, data início, data fim e valor.',
-          'Para IPTV: escolha o servidor e o revendedor (se aplicável).',
-          'Para Netflix Plano Room: escolha a sala.',
+          'Preencha os campos obrigatórios: nome, WhatsApp, PIN da área cliente, plano, perfil, PIN Netflix e meses pagos.',
+          'Para o Plano Room: escolha a sala.',
           'Clique em "Guardar".',
         ],
       },
@@ -75,11 +71,13 @@ const SECOES: Secao[] = [
         ],
       },
       {
-        titulo: 'Renovar cliente',
+        titulo: 'Pagamentos / renovar cliente',
         passos: [
-          'Clique no botão "Renovar" na linha do cliente.',
-          'A data fim será prolongada conforme o plano (mensalidade).',
-          'Confirme a renovação. O cliente só pode ser renovado se estiver ativo.',
+          'Clique no botão verde (Pagamentos ou Renovar) na linha do cliente.',
+          'Escolha quantos meses foram pagos, o valor, a data e o método.',
+          'Cada pagamento cobre meses de calendário (ex.: outubro). A renovação faz-se do dia 1 ao dia 10 do mês seguinte; a partir do dia 11 o cliente fica vencido.',
+          'Pagar adiantado cobre os meses seguintes ainda não pagos. Um cliente vencido que paga cobre a partir do mês atual.',
+          'O histórico mostra cada pagamento e cada mês (terminado, em curso ou futuro). O cliente recebe aviso no WhatsApp quando termina cada mês pago.',
         ],
       },
       {
@@ -94,7 +92,6 @@ const SECOES: Secao[] = [
         passos: [
           'Para clientes Netflix Plano Room, clique em "Atribuir sala".',
           'Selecione a sala na lista e clique em "Guardar".',
-          'A data fim do cliente pode ser alinhada à data fim da sala.',
         ],
       },
       {
@@ -114,81 +111,9 @@ const SECOES: Secao[] = [
       {
         titulo: 'Filtrar clientes',
         passos: [
-          'Use os filtros: Servidor, Revendedor, Sala (Netflix), Estado (ativo/vencido/cancelado).',
+          'Use os filtros: Sala, Estado (ativo/vencido/cancelado).',
           'Use "Vencendo" para ver clientes por vencer (hoje, 7 dias, 30 dias).',
           'Use a caixa de pesquisa para buscar por nome ou WhatsApp.',
-        ],
-      },
-    ],
-  },
-  {
-    id: 'servidores',
-    icon: Server,
-    titulo: 'Servidores',
-    desc: 'Servidores IPTV (Principal e Secundário). Associe clientes a cada servidor.',
-    detalhes: [
-      {
-        titulo: 'Criar servidor',
-        passos: [
-          'Clique no botão "+ Novo servidor".',
-          'Preencha o nome do servidor.',
-          'Selecione o tipo: Principal ou Secundário.',
-          'Se for Secundário, selecione o servidor primário a que pertence.',
-          'Clique em "Guardar".',
-        ],
-      },
-      {
-        titulo: 'Editar servidor',
-        passos: [
-          'Clique no ícone de lápis (Editar) na linha do servidor.',
-          'Altere o nome, tipo ou servidor primário (se secundário).',
-          'Clique em "Guardar".',
-        ],
-      },
-      {
-        titulo: 'Excluir servidor',
-        passos: [
-          'Clique no ícone de lixo (Excluir).',
-          'Confirme. Os clientes vinculados ficarão sem servidor atribuído.',
-        ],
-      },
-    ],
-  },
-  {
-    id: 'revendedores',
-    icon: Store,
-    titulo: 'Revendedores',
-    desc: 'Revendedores do serviço IPTV. Pode suspender e ativar conforme necessário.',
-    detalhes: [
-      {
-        titulo: 'Criar revendedor',
-        passos: [
-          'Clique no botão "+ Novo revendedor".',
-          'Preencha nome e contacto (obrigatórios).',
-          'Opcional: escolha o servidor e adicione observações.',
-          'Clique em "Guardar".',
-        ],
-      },
-      {
-        titulo: 'Editar revendedor',
-        passos: [
-          'Clique no ícone de lápis (Editar) na linha do revendedor.',
-          'Altere os campos desejados.',
-          'Clique em "Guardar".',
-        ],
-      },
-      {
-        titulo: 'Suspender revendedor',
-        passos: [
-          'Clique no botão "Suspender" na linha do revendedor.',
-          'Confirme no modal. O revendedor fica suspenso.',
-        ],
-      },
-      {
-        titulo: 'Ativar revendedor',
-        passos: [
-          'Para revendedores suspensos, clique em "Ativar".',
-          'Confirme no modal.',
         ],
       },
     ],
@@ -197,7 +122,7 @@ const SECOES: Secao[] = [
     id: 'salas',
     icon: LayoutGrid,
     titulo: 'Salas Netflix',
-    desc: 'Contas (salas) do Plano Room. Atribua clientes Netflix a salas e defina a data fim partilhada.',
+    desc: 'Contas (salas) do Plano Room. Atribua clientes Netflix a salas e registe os pagamentos da conta. Cada cliente tem a sua própria data fim (meses que pagou).',
     detalhes: [
       {
         titulo: 'Criar sala',
@@ -302,7 +227,7 @@ const SECOES: Secao[] = [
         titulo: 'O que é esta área',
         passos: [
           'Não é contabilidade pesada nem formal. É apenas controlo financeiro simples e projeção de receitas.',
-          'Acompanha quantos clientes tens, os tipos de serviço (Netflix, IPTV por servidor), quanto cada cliente paga por mês e quanto dinheiro deve entrar mensalmente.',
+          'Acompanha quantos clientes tens, quanto cada cliente paga por mês e quanto dinheiro deve entrar mensalmente.',
           'Visão clara das receitas previstas, crescimento de clientes e valor total esperado por mês.',
           'Usado para gestão interna do negócio, não para fins contabilísticos oficiais.',
         ],
@@ -311,8 +236,6 @@ const SECOES: Secao[] = [
         titulo: 'Cálculo das entradas',
         passos: [
           'Receita mensal = soma do valor que cada cliente ativo paga (preço do serviço).',
-          'Separada por tipo: Netflix e IPTV.',
-          'Receita por servidor: no IPTV, quanto entra por cada servidor no mês atual.',
           'Receita do mês (est.): clientes cujo vencimento cai no mês atual.',
         ],
       },
@@ -326,7 +249,7 @@ const SECOES: Secao[] = [
       {
         titulo: 'Finanças devidas',
         passos: [
-          'Valor em dívida de clientes vencidos. Use o seletor para ver Netflix, IPTV ou Total.',
+          'Valor em dívida de clientes vencidos.',
         ],
       },
       {
@@ -349,7 +272,7 @@ const SECOES: Secao[] = [
         passos: [
           'Clique no botão "+ Novo utilizador".',
           'Preencha nome, email e senha (obrigatórios).',
-          'Selecione o perfil: Geral, Netflix ou IPTV.',
+          'Selecione o perfil: Geral, Netflix ou Financeiro.',
           'Clique em "Guardar".',
         ],
       },
@@ -397,7 +320,6 @@ const SECOES: Secao[] = [
           'Administrador: acesso total.',
           'Geral: acesso a todas as áreas de clientes.',
           'Netflix: apenas clientes e salas Netflix.',
-          'IPTV: apenas clientes e revendedores IPTV.',
         ],
       },
     ],
@@ -418,7 +340,7 @@ const SECOES: Secao[] = [
       {
         titulo: 'Filtrar registos',
         passos: [
-          'Entidade: filtro por Cliente, Servidor, Revendedor, Sala ou Indicação.',
+          'Entidade: filtro por Cliente, Sala ou Indicação.',
           'Ação: filtro por tipo de ação (criar, atualizar, renovar, suspender, etc.).',
           'Utilizador: filtro por quem fez a alteração.',
           'Período: datas de início e fim.',

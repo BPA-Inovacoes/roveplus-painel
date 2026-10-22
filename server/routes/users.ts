@@ -21,7 +21,7 @@ import {
 } from '../lib/panelAlertPrefs.js'
 
 const router = Router()
-const ROLES_OPERADORES = ['geral', 'netflix', 'iptv', 'financeiro']
+const ROLES_OPERADORES = ['geral', 'netflix', 'financeiro']
 
 async function loadUserAlertScopesMap(): Promise<Record<number, PanelAlertCategory[] | null>> {
   await ensureUserAlertScopesColumn().catch(() => {})
@@ -113,7 +113,7 @@ router.post('/', auditLog('create_user', 'user'), async (req, res) => {
   }
   const r = String(role || 'geral').toLowerCase()
   if (!ROLES_OPERADORES.includes(r)) {
-    return res.status(400).json({ error: 'Role deve ser geral, netflix, iptv ou financeiro. Só pode existir um admin no sistema.' })
+    return res.status(400).json({ error: 'Role deve ser geral, netflix ou financeiro. Só pode existir um admin no sistema.' })
   }
   const emailNorm = String(email).trim().toLowerCase()
   const existing = await prisma.user.findUnique({ where: { email: emailNorm } })

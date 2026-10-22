@@ -126,7 +126,7 @@ export default function Audit() {
             Log de alterações
           </h2>
           <p className="text-sm text-gray-400 mt-1 max-w-2xl">
-            Histórico de ações no painel: clientes, cobranças, servidores, salas e utilizadores.
+            Histórico de ações no painel: clientes, cobranças, salas e utilizadores.
             Só são registadas operações concluídas com sucesso.
           </p>
         </div>

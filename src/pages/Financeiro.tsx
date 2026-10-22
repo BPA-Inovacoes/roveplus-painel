@@ -16,7 +16,6 @@ import {
   CalendarClock,
   TrendingUp,
   Tv,
-  Server,
   Wallet,
   Receipt,
   Tags,
@@ -24,19 +23,17 @@ import {
 import { api } from '../api/client'
 import { useAlert } from '../contexts/AlertContext'
 import { useAuth } from '../contexts/AuthContext'
-import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
 import { FinanceiroCobrancas } from './financeiro/FinanceiroCobrancas'
 import { FinanceiroCustos } from './financeiro/FinanceiroCustos'
 import { FinanceiroInscricoes } from './financeiro/FinanceiroInscricoes'
 import { FinanceiroPlanos } from './financeiro/FinanceiroPlanos'
+import { ArrecadacaoMesCard } from '../components/ArrecadacaoMesCard'
 import { canAccessFinanceiroPage, defaultPanelPath } from '../lib/panelRoles'
-import type { CobrancaFiltro, FinanceData, FinanceiroTab, SalaFinanceira, ServicoView, ServidorFinanceiro } from './financeiro/types'
+import type { CobrancaFiltro, FinanceData, FinanceiroTab, SalaFinanceira } from './financeiro/types'
 
 const CHART_COLORS = {
   netflix: '#ef4444',
   netflixFill: '#ef4444',
-  iptv: '#3b82f6',
-  iptvFill: '#60a5fa',
   total: '#22c55e',
   grid: 'rgba(75, 85, 99, 0.3)',
 }
@@ -55,19 +52,14 @@ export default function Financeiro() {
   const [tab, setTab] = useState<FinanceiroTab>('visao')
   const [data, setData] = useState<FinanceData | null>(null)
   const [salas, setSalas] = useState<SalaFinanceira[]>([])
-  const [servidores, setServidores] = useState<ServidorFinanceiro[]>([])
   const [loading, setLoading] = useState(true)
   const [mesesProjecao, setMesesProjecao] = useState(3)
   const [novosClientesMes, setNovosClientesMes] = useState(0)
   const [valorMedioNovo, setValorMedioNovo] = useState(0)
-  const [servicoView, setServicoView] = useState<ServicoView>('todos')
-  const [servidorTablePage, setServidorTablePage] = useState(1)
   const [cobrancaFiltro, setCobrancaFiltro] = useState<CobrancaFiltro>('vencidos')
-  const [cobrancaServidorId, setCobrancaServidorId] = useState<number | null>(null)
 
-  function goCobrancas(filtro: CobrancaFiltro, servidorId?: number | null) {
+  function goCobrancas(filtro: CobrancaFiltro) {
     setCobrancaFiltro(filtro)
-    setCobrancaServidorId(servidorId ?? null)
     setTab('cobrancas')
   }
 
@@ -89,15 +81,8 @@ export default function Financeiro() {
       .catch(() => setSalas([]))
   }
 
-  async function loadServidoresFinance() {
-    return api
-      .get<ServidorFinanceiro[]>('/api/servidores')
-      .then((rows) => setServidores(Array.isArray(rows) ? rows : []))
-      .catch(() => setServidores([]))
-  }
-
   async function reloadAll() {
-    await Promise.all([loadDashboardFinance(), loadSalasFinance(), loadServidoresFinance()])
+    await Promise.all([loadDashboardFinance(), loadSalasFinance()])
   }
 
   useEffect(() => {
@@ -108,30 +93,7 @@ export default function Financeiro() {
   const variacaoReceita = data?.variacaoReceita ?? 0
   const receitaMeses = data?.receitaUltimosMeses ?? []
   const receitaMensal = Number(data?.receitaMensalProjetada ?? 0)
-  const receitaMensalNetflix = Number(data?.receitaMensalProjetadaNetflix ?? 0)
-  const receitaMensalIptv = Number(data?.receitaMensalProjetadaIptv ?? 0)
-  const receitaPorServidor = data?.receitaPorServidor ?? []
-  const valorDevidoNetflix = Number(data?.valorVencidoNetflix ?? 0)
-  const valorDevidoIptv = Number(data?.valorVencidoIptv ?? 0)
   const valorDevidoTotal = Number(data?.valorVencidoTotal ?? 0)
-  const canShowNetflix = servicoView === 'todos' || servicoView === 'netflix'
-  const canShowIptv = servicoView === 'todos' || servicoView === 'iptv'
-  const totalClientesServico =
-    servicoView === 'netflix' ? (data?.totalNetflix ?? 0) : servicoView === 'iptv' ? (data?.totalIptv ?? 0) : (data?.totalClientes ?? 0)
-  const receitaMensalServico =
-    servicoView === 'netflix'
-      ? Number(data?.receitaMensalProjetadaNetflix ?? 0)
-      : servicoView === 'iptv'
-        ? Number(data?.receitaMensalProjetadaIptv ?? 0)
-        : receitaMensal
-  const receitaMesServico =
-    servicoView === 'netflix'
-      ? Number(data?.receitaMesNetflix ?? 0)
-      : servicoView === 'iptv'
-        ? Number(data?.receitaMesIptv ?? 0)
-        : Number(data?.receitaMes ?? 0)
-  const valorDevidoServico =
-    servicoView === 'netflix' ? valorDevidoNetflix : servicoView === 'iptv' ? valorDevidoIptv : valorDevidoTotal
 
   const projecaoSimples = receitaMensal * Math.max(0, Math.min(24, mesesProjecao))
   const valorMedio = valorMedioNovo > 0 ? valorMedioNovo : (data?.totalClientes ? receitaMensal / data.totalClientes : 0)
@@ -140,11 +102,8 @@ export default function Financeiro() {
   const totalClientes = data?.totalClientes ?? 0
   const valorMedioCliente = totalClientes > 0 ? receitaMensal / totalClientes : 0
   const totalUltimos6Meses = receitaMeses.reduce((s, m) => s + m.valor, 0)
-  const percentNetflix = receitaMensal > 0 ? (Number(data?.receitaMensalProjetadaNetflix ?? 0) / receitaMensal) * 100 : 0
-  const percentIptv = receitaMensal > 0 ? (Number(data?.receitaMensalProjetadaIptv ?? 0) / receitaMensal) * 100 : 0
-  const custoServidores = Number(data?.custoServidoresIptv ?? 0)
   const custoSalas = Number(data?.custoSalasNetflix ?? 0)
-  const lucroEstimado = Number(data?.lucroEstimado ?? receitaMensal - custoServidores - custoSalas)
+  const lucroEstimado = Number(data?.lucroEstimado ?? receitaMensal - custoSalas)
 
   if (user && !canAccessFinanceiroPage(user.role)) {
     return <Navigate to={defaultPanelPath(user.role)} replace />
@@ -169,7 +128,7 @@ export default function Financeiro() {
           Financeiro
         </h1>
         <p className="text-sm text-gray-400 mt-1">
-          Centro financeiro do painel: receitas, cobranças, custos de infraestrutura, inscrições e preços.
+          Centro financeiro do painel: receitas, cobranças, custos das salas, inscrições e preços.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           <div className="inline-flex items-center gap-1 p-1 rounded-xl border border-netflix-border/70 bg-netflix-panel/70">
@@ -190,27 +149,18 @@ export default function Financeiro() {
               )
             })}
           </div>
-          {(tab === 'visao' || tab === 'cobrancas' || tab === 'custos') && (
-            <div className="inline-flex items-center gap-1 p-1 rounded-xl border border-netflix-border/70 bg-netflix-panel/70">
-              {(['todos', 'iptv', 'netflix'] as const).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setServicoView(s)}
-                  className={`px-3 py-2 rounded-lg text-sm font-semibold capitalize transition-colors ${
-                    servicoView === s ? 'bg-primary-600 text-white' : 'text-gray-300 hover:text-white hover:bg-white/10'
-                  }`}
-                >
-                  {s === 'todos' ? 'Todos' : s.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
       </div>
 
       {tab === 'visao' && (
         <>
+          {data?.arrecadacaoMes && (
+            <ArrecadacaoMesCard
+              data={data.arrecadacaoMes}
+              custoSalas={custoSalas}
+              onVerPorPagar={() => goCobrancas('porPagarMes')}
+            />
+          )}
           <div className="rounded-xl border border-netflix-border/80 bg-netflix-card/80 p-5 shadow-lg shadow-black/20">
             <h3 className="text-base font-semibold text-white mb-4 flex items-center gap-2">
               <LayoutDashboard className="w-5 h-5 text-gray-400" />
@@ -219,12 +169,12 @@ export default function Financeiro() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="rounded-lg border border-green-600/40 bg-green-900/20 p-4">
                 <p className="text-xs text-green-300 uppercase tracking-wider">Receita mensal projetada</p>
-                <p className="text-xl font-bold text-white mt-0.5">{receitaMensalServico.toFixed(2)} kz</p>
-                <p className="text-xs text-gray-500 mt-1">{totalClientesServico} clientes ativos</p>
+                <p className="text-xl font-bold text-white mt-0.5">{receitaMensal.toFixed(2)} kz</p>
+                <p className="text-xs text-gray-500 mt-1">{totalClientes} clientes ativos</p>
               </div>
               <div className="rounded-lg border border-netflix-border/80 bg-netflix-panel/60 p-4">
                 <p className="text-xs text-gray-400 uppercase tracking-wider">Receita deste mês (est.)</p>
-                <p className="text-xl font-bold text-white mt-0.5">{receitaMesServico.toFixed(2)} kz</p>
+                <p className="text-xl font-bold text-white mt-0.5">{Number(data?.receitaMes ?? 0).toFixed(2)} kz</p>
                 {data?.receitaMesAnterior != null && data.receitaMesAnterior > 0 && (
                   <p className={`text-xs mt-1 ${variacaoReceita >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                     {variacaoReceita >= 0 ? '+' : ''}{variacaoReceita}% vs mês anterior
@@ -237,7 +187,7 @@ export default function Financeiro() {
                 className="rounded-lg border border-amber-600/40 bg-amber-900/20 p-4 text-left hover:bg-amber-900/30 transition-colors"
               >
                 <p className="text-xs text-amber-300 uppercase tracking-wider">Total em dívida</p>
-                <p className="text-xl font-bold text-white mt-0.5">{valorDevidoServico.toFixed(2)} kz</p>
+                <p className="text-xl font-bold text-white mt-0.5">{valorDevidoTotal.toFixed(2)} kz</p>
                 <p className="text-xs text-amber-200/80 mt-1">Cobrar vencidos →</p>
               </button>
               <div className="rounded-lg border border-emerald-600/40 bg-emerald-900/20 p-4">
@@ -246,7 +196,7 @@ export default function Financeiro() {
                   {lucroEstimado.toFixed(2)} kz
                 </p>
                 <p className="text-xs text-gray-500 mt-1">
-                  Custos: {custoServidores.toFixed(0)} + {custoSalas.toFixed(0)} kz
+                  Orçamento salas: {data?.totalSalasAtivas ?? 0} × {Number(data?.custoPorSala ?? 0).toLocaleString('pt-PT')} = {custoSalas.toLocaleString('pt-PT')} kz
                 </p>
               </div>
             </div>
@@ -256,54 +206,6 @@ export default function Financeiro() {
               <span><strong className="text-gray-300">Salas a vencer (7d):</strong> {data?.salasVencendo ?? 0}</span>
             </div>
           </div>
-
-          {canShowNetflix && (
-            <div className="rounded-xl border border-primary-600/50 bg-primary-900/20 p-6">
-              <h3 className="text-base font-semibold text-white mb-4 flex items-center gap-2">
-                <Tv className="w-5 h-5 text-primary-400" />
-                Netflix
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="rounded-lg border border-primary-600/40 bg-primary-900/30 p-4">
-                  <p className="text-xs text-primary-300 uppercase">Receita mensal</p>
-                  <p className="text-xl font-bold text-white">{Number(data?.receitaMensalProjetadaNetflix ?? 0).toFixed(2)} kz</p>
-                  <p className="text-xs text-gray-500">{data?.totalNetflix ?? 0} clientes ({percentNetflix.toFixed(0)}%)</p>
-                </div>
-                <div className="rounded-lg border border-primary-500/30 bg-netflix-card/80 p-4">
-                  <p className="text-xs text-primary-300/90 uppercase">Este mês</p>
-                  <p className="text-xl font-bold text-white">{Number(data?.receitaMesNetflix ?? 0).toFixed(2)} kz</p>
-                </div>
-                <div className="rounded-lg border border-amber-600/40 bg-amber-900/20 p-4">
-                  <p className="text-xs text-amber-300 uppercase">Em dívida</p>
-                  <p className="text-xl font-bold text-white">{valorDevidoNetflix.toFixed(2)} kz</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {canShowIptv && (
-            <div className="rounded-xl border border-blue-600/50 bg-blue-900/20 p-6">
-              <h3 className="text-base font-semibold text-white mb-4 flex items-center gap-2">
-                <Server className="w-5 h-5 text-blue-400" />
-                IPTV
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="rounded-lg border border-blue-600/40 bg-blue-900/30 p-4">
-                  <p className="text-xs text-blue-300 uppercase">Receita mensal</p>
-                  <p className="text-xl font-bold text-white">{Number(data?.receitaMensalProjetadaIptv ?? 0).toFixed(2)} kz</p>
-                  <p className="text-xs text-gray-500">{data?.totalIptv ?? 0} clientes ({percentIptv.toFixed(0)}%)</p>
-                </div>
-                <div className="rounded-lg border border-blue-500/30 bg-netflix-card/80 p-4">
-                  <p className="text-xs text-blue-300/90 uppercase">Este mês</p>
-                  <p className="text-xl font-bold text-white">{Number(data?.receitaMesIptv ?? 0).toFixed(2)} kz</p>
-                </div>
-                <div className="rounded-lg border border-amber-600/40 bg-amber-900/20 p-4">
-                  <p className="text-xs text-amber-300 uppercase">Em dívida</p>
-                  <p className="text-xl font-bold text-white">{valorDevidoIptv.toFixed(2)} kz</p>
-                </div>
-              </div>
-            </div>
-          )}
 
           <div className="rounded-xl border border-netflix-border/80 bg-netflix-card/80 p-5">
             <h3 className="text-base font-semibold text-white mb-4">Ações rápidas</h3>
@@ -318,7 +220,7 @@ export default function Financeiro() {
                 Vencem em 7 dias ({data?.vencendoEm7Dias ?? 0})
               </button>
               <button type="button" onClick={() => setTab('custos')} className="px-3 py-2 rounded-lg text-sm font-medium border border-blue-500/40 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20">
-                Pagar servidores / salas
+                Pagar salas
               </button>
               <button type="button" onClick={() => setTab('inscricoes')} className="px-3 py-2 rounded-lg text-sm font-medium border border-primary-500/40 bg-primary-500/10 text-primary-200 hover:bg-primary-500/20">
                 Inscrições pendentes
@@ -396,18 +298,6 @@ export default function Financeiro() {
                 <p className="text-xs text-gray-400 uppercase">Total ({mesesProjecao} meses)</p>
                 <p className="text-xl font-bold text-green-400">{projecaoSimples.toFixed(2)} kz</p>
               </div>
-              {canShowNetflix && (
-                <div className="rounded-lg border border-primary-600/40 bg-primary-900/20 p-4">
-                  <p className="text-xs text-primary-300 uppercase">Netflix</p>
-                  <p className="text-xl font-bold text-white">{(receitaMensalNetflix * mesesProjecao).toFixed(2)} kz</p>
-                </div>
-              )}
-              {canShowIptv && (
-                <div className="rounded-lg border border-blue-600/40 bg-blue-900/20 p-4">
-                  <p className="text-xs text-blue-300 uppercase">IPTV</p>
-                  <p className="text-xl font-bold text-white">{(receitaMensalIptv * mesesProjecao).toFixed(2)} kz</p>
-                </div>
-              )}
               {novosClientesMes > 0 && (
                 <div className="rounded-lg border border-green-600/50 bg-green-900/20 p-4">
                   <p className="text-xs text-green-300 uppercase">Com crescimento</p>
@@ -416,58 +306,6 @@ export default function Financeiro() {
               )}
             </div>
           </div>
-
-          {canShowIptv && receitaPorServidor.length > 0 && (
-            <div className="rounded-xl border border-netflix-border/80 bg-netflix-card/80 overflow-hidden">
-              <div className="p-6 pb-0">
-                <h3 className="text-base font-semibold text-white mb-4 flex items-center gap-2">
-                  <Server className="w-5 h-5 text-blue-400" />
-                  Receita por servidor (mês atual)
-                </h3>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-gray-400 border-b border-netflix-border">
-                      <th className="text-left py-2 px-3">Servidor</th>
-                      <th className="text-right py-2 px-3">Clientes</th>
-                      <th className="text-right py-2 px-3">Receita (kz)</th>
-                      <th className="text-right py-2 px-3">Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(() => {
-                      const totalPages = Math.max(1, Math.ceil(receitaPorServidor.length / ROWS_PER_PAGE))
-                      const page = Math.min(servidorTablePage, totalPages)
-                      return receitaPorServidor
-                        .slice((page - 1) * ROWS_PER_PAGE, page * ROWS_PER_PAGE)
-                        .map((r) => (
-                          <tr key={r.servidorId} className="border-b border-netflix-border/60">
-                            <td className="py-2 px-3 text-white">{r.servidorNome}</td>
-                            <td className="py-2 px-3 text-right text-gray-300">{r.clientes}</td>
-                            <td className="py-2 px-3 text-right font-medium text-white">{r.receita.toFixed(2)}</td>
-                            <td className="py-2 px-3 text-right">
-                              <button
-                                type="button"
-                                onClick={() => goCobrancas('7dias', r.servidorId)}
-                                className="text-xs font-medium text-blue-300 hover:text-blue-100 border border-blue-500/40 rounded-lg px-2.5 py-1.5 hover:bg-blue-500/10"
-                              >
-                                Cobrar
-                              </button>
-                            </td>
-                          </tr>
-                        ))
-                    })()}
-                  </tbody>
-                </table>
-              </div>
-              <TablePagination
-                totalItems={receitaPorServidor.length}
-                currentPage={Math.min(servidorTablePage, Math.max(1, Math.ceil(receitaPorServidor.length / ROWS_PER_PAGE)))}
-                onPageChange={setServidorTablePage}
-              />
-            </div>
-          )}
 
           <div className="rounded-xl border border-netflix-border/80 bg-netflix-card/80 p-6">
             <h3 className="text-base font-semibold text-white">Receita por mês (kz)</h3>
@@ -480,10 +318,6 @@ export default function Financeiro() {
                         <stop offset="0%" stopColor={CHART_COLORS.netflixFill} stopOpacity={0.5} />
                         <stop offset="100%" stopColor={CHART_COLORS.netflixFill} stopOpacity={0} />
                       </linearGradient>
-                      <linearGradient id="finance-receita-iptv" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={CHART_COLORS.iptvFill} stopOpacity={0.5} />
-                        <stop offset="100%" stopColor={CHART_COLORS.iptvFill} stopOpacity={0} />
-                      </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} />
                     <XAxis dataKey="mes" tick={{ fill: '#9ca3af', fontSize: 11 }} />
@@ -492,15 +326,10 @@ export default function Financeiro() {
                       contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
                       formatter={(value: number | undefined, name: string | undefined) => [
                         `${Number(value ?? 0).toFixed(2)} kz`,
-                        name === 'valorNetflix' ? 'Netflix' : name === 'valorIptv' ? 'IPTV' : 'Total',
+                        name === 'valor' ? 'Netflix' : String(name ?? ''),
                       ]}
                     />
-                    {canShowNetflix && (
-                      <Area type="monotone" dataKey="valorNetflix" stackId={servicoView === 'todos' ? '1' : undefined} stroke={CHART_COLORS.netflix} fill="url(#finance-receita-netflix)" />
-                    )}
-                    {canShowIptv && (
-                      <Area type="monotone" dataKey="valorIptv" stackId={servicoView === 'todos' ? '1' : undefined} stroke={CHART_COLORS.iptv} fill="url(#finance-receita-iptv)" />
-                    )}
+                    <Area type="monotone" dataKey="valor" stroke={CHART_COLORS.netflix} fill="url(#finance-receita-netflix)" />
                   </AreaChart>
                 </ResponsiveContainer>
               ) : (
@@ -513,20 +342,15 @@ export default function Financeiro() {
 
       {tab === 'cobrancas' && (
         <FinanceiroCobrancas
-          servicoView={servicoView}
           initialFiltro={cobrancaFiltro}
-          servidorId={cobrancaServidorId}
           onChanged={reloadAll}
         />
       )}
 
       {tab === 'custos' && (
         <FinanceiroCustos
-          servicoView={servicoView}
           salas={salas}
-          servidores={servidores}
           onReloadSalas={loadSalasFinance}
-          onReloadServidores={loadServidoresFinance}
           onReloadDashboard={loadDashboardFinance}
         />
       )}

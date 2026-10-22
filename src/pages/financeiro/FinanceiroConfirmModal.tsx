@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { RoveModalOverlay } from '../../components/RoveModalOverlay'
+import { LoadingButton } from '../../components/LoadingButton'
 
 export type FinanceiroModalVariant = 'green' | 'emerald' | 'amber' | 'blue' | 'red' | 'primary'
 
@@ -121,14 +122,14 @@ export function FinanceiroConfirmModal({
           >
             {cancelLabel}
           </button>
-          <button
-            type="button"
+          <LoadingButton
             onClick={onConfirm}
-            disabled={loading || confirmDisabled}
+            loading={loading}
+            disabled={confirmDisabled}
             className={`flex-1 py-2.5 px-4 text-white rounded-xl text-sm font-medium transition-colors disabled:opacity-50 disabled:hover:opacity-50 ${s.btn}`}
           >
             {loading ? 'A processar...' : confirmLabel}
-          </button>
+          </LoadingButton>
         </div>
       </div>
     </RoveModalOverlay>

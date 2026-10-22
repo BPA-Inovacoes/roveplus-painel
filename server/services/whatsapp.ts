@@ -176,6 +176,20 @@ export const templates = {
   renovado: (nome: string, dataFim: string) =>
     formatClientMessage(`Olá ${nome}! Renovação confirmada. Próxima data de renovação: ${dataFim}. Obrigado!`),
 
+  pagamentoMesesRegistado: (nome: string, meses: number, dataPagamento: string, dataFim: string) =>
+    formatClientMessage(
+      `Olá ${nome}! Registámos o seu pagamento de ${meses === 1 ? '1 mês' : `${meses} meses`} (pago a ${dataPagamento}). O seu serviço está pago até ${dataFim}. Obrigado!`
+    ),
+
+  /** Um dos meses pagos terminou, mas ainda há meses pagos à frente. */
+  /** Terminou um mês pago e ainda há meses pagos à frente. `mesTerminado` ex.: "outubro de 2026". */
+  mesPagoTerminou: (nome: string, mesTerminado: string, restantes: number, renovarAte: string) =>
+    formatClientMessage(
+      `Olá ${nome}! Terminou o mês de ${mesTerminado} que pagou. ${
+        restantes === 1 ? 'Resta 1 mês pago' : `Restam ${restantes} meses pagos`
+      } — o seu serviço continua ativo. Próxima renovação: até ${renovarAte}.`
+    ),
+
   contaCancelada: (nome: string) =>
     formatClientMessage(
       `Olá ${nome}! A sua conta Rove+ foi cancelada. Se precisar de reativar o serviço, fale connosco.`
@@ -194,11 +208,6 @@ export const templates = {
   areaClienteAtivada: (nome: string, url: string) =>
     formatClientMessage(
       `Olá ${nome}! A sua área cliente Rove+ está ativa.\nEntre em ${url} com o seu WhatsApp e o PIN definido pela equipa.\nRecomendamos alterar o PIN no primeiro acesso.`
-    ),
-
-  credenciaisIptvAtualizadas: (nome: string) =>
-    formatClientMessage(
-      `Olá ${nome}! As credenciais do seu IPTV Rove+ foram atualizadas. Consulte a área cliente ou fale connosco se precisar de ajuda.`
     ),
 
   credenciaisNetflixAtualizadas: (nome: string, perfil: string | null) =>
@@ -226,11 +235,6 @@ export const templates = {
       `Olá ${nome}! A sala Netflix "${salaNome}" foi reativada. Renovação: ${dataFim}.`
     ),
 
-  servidorManutencao: (nome: string, servidorNome: string) =>
-    formatClientMessage(
-      `Olá ${nome}! O servidor IPTV "${servidorNome}" está em manutenção. Pode haver interrupções temporárias — a equipa está a trabalhar na resolução.`
-    ),
-
   indicacaoRegistada: (nomeIndicador: string, indicadoNome: string) =>
     formatClientMessage(
       `Olá ${nomeIndicador}! Registámos a sua indicação de ${indicadoNome}. A equipa vai analisar e entrará em contacto. Obrigado!`
@@ -243,6 +247,6 @@ export const templates = {
 
   indicacaoConviteIndicado: (indicadoNome: string, indicadorNome: string) =>
     formatClientMessage(
-      `Olá ${indicadoNome}! ${indicadorNome} indicou-o à Rove+. Quer conhecer os nossos planos Netflix e IPTV? Fale connosco — estamos à disposição.`
+      `Olá ${indicadoNome}! ${indicadorNome} indicou-o à Rove+. Quer conhecer os nossos planos Netflix? Fale connosco — estamos à disposição.`
     ),
 }

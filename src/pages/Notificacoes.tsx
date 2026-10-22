@@ -7,8 +7,6 @@ import {
   CalendarClock,
   AlertTriangle,
   Gift,
-  Server,
-  Store,
   DollarSign,
   ChevronRight,
   Tv,
@@ -22,7 +20,6 @@ import { useAlert } from '../contexts/AlertContext'
 
 interface NotifData {
   totalNetflix?: number
-  totalIptv?: number
   totalClientes?: number
   clientesVencidos?: number
   clientesCancelados?: number
@@ -33,11 +30,8 @@ interface NotifData {
   indicacoesPendentes?: number
   indicacoesConfirmadas?: number
   indicacoesEsteMes?: number
-  totalRevendedores?: number
-  clientesComRevendedor?: number
   receitaMes?: number
   valorVencidoTotal?: number
-  clientsByServidor?: { id: number; nome: string; totalClientes: number; status: string }[]
   salasVencendo?: number
   salasVencidas?: number
 }
@@ -102,10 +96,7 @@ export default function Notificacoes() {
   }, [showError])
 
   const role = user?.role
-  const showNetflix = role !== 'iptv'
-  const showIptv = role !== 'netflix'
-  const showServidores = ['admin', 'geral', 'iptv', 'suporte'].includes(role ?? '')
-  const showRevendedores = showServidores
+  const showNetflix = !!role
 
   if (loading) {
     return (
@@ -196,15 +187,6 @@ export default function Notificacoes() {
               href="/clientes"
             />
           )}
-          {showIptv && (
-            <IndicatorCard
-              icon={Server}
-              label="IPTV"
-              value={data?.totalIptv ?? 0}
-              sub="Clientes ativos IPTV"
-              href="/clientes"
-            />
-          )}
         </div>
       </section>
 
@@ -244,57 +226,6 @@ export default function Notificacoes() {
           />
         </div>
       </section>
-
-      {/* Servidores (IPTV) */}
-      {showServidores && (
-        <section>
-          <h2 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-            <Server className="w-5 h-5 text-blue-400" />
-            Servidores
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {(data?.clientsByServidor ?? []).map((s) => (
-              <IndicatorCard
-                key={s.id}
-                icon={Server}
-                label={s.nome}
-                value={s.totalClientes}
-                sub={`${s.totalClientes} clientes • ${s.status}`}
-                href="/servidores"
-                variant={s.status !== 'online' ? 'warning' : 'default'}
-              />
-            ))}
-            {(!data?.clientsByServidor || data.clientsByServidor.length === 0) && (
-              <p className="text-sm text-gray-500 col-span-full">Nenhum servidor.</p>
-            )}
-          </div>
-        </section>
-      )}
-
-      {/* Revendedores */}
-      {showRevendedores && (
-        <section>
-          <h2 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-            <Store className="w-5 h-5 text-gray-400" />
-            Revendedores
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <IndicatorCard
-              icon={Store}
-              label="Total revendedores"
-              value={data?.totalRevendedores ?? 0}
-              href="/revendedores"
-            />
-            <IndicatorCard
-              icon={Users}
-              label="Clientes com revendedor"
-              value={data?.clientesComRevendedor ?? 0}
-              sub="Atribuídos a um revendedor"
-              href="/clientes"
-            />
-          </div>
-        </section>
-      )}
 
       {/* Salas Netflix */}
       {showNetflix && (

@@ -9,14 +9,14 @@ import {
   Trash2,
   AlertTriangle,
   LayoutGrid,
-  Tv,
-  Film,
   CheckCircle,
   Users,
   Lock,
   Check,
   Eye,
   EyeOff,
+  Ban,
+  Wallet,
 } from 'lucide-react'
 import { RoveDatePicker } from '../components/RoveDatePicker'
 import { RoveSelect } from '../components/RoveSelect'
@@ -28,6 +28,10 @@ import { api } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { useAlert } from '../contexts/AlertContext'
 import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
+import { PagamentosClienteModal } from '../components/PagamentosClienteModal'
+import { LoadingButton } from '../components/LoadingButton'
+import { useBusy } from '../lib/useBusy'
+import { MAX_CLIENTES_POR_SALA } from '../lib/planos'
 
 interface Client {
   id: number
@@ -37,10 +41,9 @@ interface Client {
   localizacao: string | null
   servico: string
   plano: string
-  servidorId: number | null
-  revendedorId: number | null
   perfil: string | null
   pin?: string | null
+  dataSubscricao: string
   dataInicio: string
   dataFim: string
   valor: number
@@ -49,22 +52,7 @@ interface Client {
   sala?: { id: number; nome: string } | null
   status: string
   indicacoes: number
-  servidor?: { id: number; nome: string } | null
-  revendedor?: { id: number; nome: string } | null
   areaClienteAtiva?: boolean
-}
-
-interface Servidor {
-  id: number
-  nome: string
-  tipo?: string
-  totalClientes: number
-  servidor?: { id: number; nome: string } | null
-}
-
-interface Revendedor {
-  id: number
-  nome: string
 }
 
 interface Sala {
@@ -72,19 +60,32 @@ interface Sala {
   nome: string
   dataFim?: string | null
   totalClientes?: number
+  lugaresOcupados?: number
+}
+
+/** Rótulo da sala com a ocupação, ex.: "SALA 1 (4/5)" ou "SALA 1 (cheia)". */
+function salaOpcao(s: Sala) {
+  const ocupados = s.lugaresOcupados ?? 0
+  return `${s.nome} (${ocupados >= MAX_CLIENTES_POR_SALA ? 'cheia' : `${ocupados}/${MAX_CLIENTES_POR_SALA}`})`
+}
+
+function salaCheia(s: Sala) {
+  return (s.lugaresOcupados ?? 0) >= MAX_CLIENTES_POR_SALA
 }
 
 const statusColors: Record<string, string> = {
   ativo: 'bg-green-900/50 text-green-300',
   vencido: 'bg-red-900/50 text-red-300',
   cancelado: 'bg-gray-700 text-gray-300',
+  inativo: 'bg-amber-900/50 text-amber-300',
 }
 
-/** Planos IPTV (só o nome no select; valor = mensalidade) */
-const PLANOS_IPTV = [
-  { id: 'Pacote Premium', label: 'Pacote Premium', valor: 9500 },
-  { id: 'Pacote Ultimate', label: 'Pacote Ultimate', valor: 12500 },
-] as const
+const statusLabels: Record<string, string> = {
+  ativo: 'Ativo',
+  vencido: 'Vencido',
+  cancelado: 'Cancelado',
+  inativo: 'Inativo',
+}
 
 /** Planos Netflix (só o nome no select; valor = mensalidade; inscricao = valor da inscrição) */
 const PLANOS_NETFLIX = [
@@ -92,9 +93,8 @@ const PLANOS_NETFLIX = [
   { id: 'Plano Solo', label: 'Plano Solo', valor: 18500, inscricao: 4000 },
 ] as const
 
-function planoPredefinido(servico: 'iptv' | 'netflix'): { plano: string; valor: number } {
-  const lista = servico === 'netflix' ? PLANOS_NETFLIX : PLANOS_IPTV
-  const p = lista[0]
+function planoPredefinido(): { plano: string; valor: number } {
+  const p = PLANOS_NETFLIX[0]
   return { plano: p.id, valor: p.valor }
 }
 
@@ -128,14 +128,18 @@ function RequiredMark() {
   )
 }
 
-function isPlanoValorManual(servico: string | undefined, plano: string | undefined): boolean {
+function isPlanoValorManual(plano: string | undefined): boolean {
   if (!plano || plano === 'Outro') return true
-  const lista = servico === 'netflix' ? PLANOS_NETFLIX : PLANOS_IPTV
-  return !lista.some((p) => p.id === plano)
+  return !PLANOS_NETFLIX.some((p) => p.id === plano)
 }
 
 function formatDate(s: string) {
   return new Date(s).toLocaleDateString('pt-BR')
+}
+
+/** Mesma regra do servidor: N meses de calendário a partir do mês de `inicio`; renova até ao dia 10 do mês seguinte. */
+function limiteRenovacaoAposMeses(inicio: Date, meses: number) {
+  return new Date(inicio.getFullYear(), inicio.getMonth() + meses, 10)
 }
 
 function daysUntil(date: string) {
@@ -148,22 +152,13 @@ function daysUntil(date: string) {
 
 export default function Clientes() {
   const { user } = useAuth()
-  const { showError, showWarning } = useAlert()
+  const { showError, showWarning, showInfo } = useAlert()
   const role = user?.role
-  const operadorNetflix = role === 'netflix'
-  const operadorIptv = role === 'iptv'
-  const servicoFixo = operadorNetflix ? 'netflix' : operadorIptv ? 'iptv' : null
 
   const [clients, setClients] = useState<Client[]>([])
-  const [servidores, setServidores] = useState<Servidor[]>([])
-  const [revendedores, setRevendedores] = useState<Revendedor[]>([])
   const [salas, setSalas] = useState<Sala[]>([])
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'iptv' | 'netflix'>(servicoFixo ?? 'iptv')
   const [filter, setFilter] = useState({
-    servico: servicoFixo ?? 'iptv',
-    servidorId: '',
-    revendedorId: '',
     salaId: '' as string,
     status: '',
     vencendo: '',
@@ -177,18 +172,18 @@ export default function Clientes() {
   const [clientSuspender, setClientSuspender] = useState<Client | null>(null)
   const [clientAtivar, setClientAtivar] = useState<Client | null>(null)
   const [clientToDelete, setClientToDelete] = useState<Client | null>(null)
-  const [clientRenovar, setClientRenovar] = useState<Client | null>(null)
-  const [renovarMeses, setRenovarMeses] = useState<number | ''>('')
+  const [clientPagamentos, setClientPagamentos] = useState<Client | null>(null)
   const [tablePage, setTablePage] = useState(1)
-  const servicoInicial = (servicoFixo ?? 'iptv') as 'iptv' | 'netflix'
-  const planoInicial = planoPredefinido(servicoInicial)
+  const [saving, setSaving] = useState(false)
+  const { busy, run } = useBusy()
+  const planoInicial = planoPredefinido()
   const [form, setForm] = useState<
-    Partial<Client> & { portalPin?: string; removerPinPortal?: boolean }
+    Partial<Client> & { portalPin?: string; removerPinPortal?: boolean; mesesPagos?: number | '' }
   >({
     nome: '',
     whatsapp: emptyWhatsapp(),
     localizacao: '',
-    servico: servicoInicial,
+    servico: 'netflix',
     plano: planoInicial.plano,
     valor: planoInicial.valor,
     dataFim: '',
@@ -199,9 +194,6 @@ export default function Clientes() {
   function load(searchQuery = searchDebounced) {
     setLoading(true)
     const params = new URLSearchParams()
-    if (filter.servico) params.set('servico', filter.servico)
-    if (filter.servidorId) params.set('servidorId', filter.servidorId)
-    if (filter.revendedorId) params.set('revendedorId', filter.revendedorId)
     if (filter.salaId) params.set('salaId', filter.salaId)
     if (filter.status) params.set('status', filter.status)
     if (filter.vencendo) params.set('vencendo', filter.vencendo)
@@ -224,39 +216,24 @@ export default function Clientes() {
 
   useEffect(() => {
     load()
-  }, [filter.servico, filter.servidorId, filter.revendedorId, filter.salaId, filter.status, filter.vencendo, searchDebounced])
+  }, [filter.salaId, filter.status, filter.vencendo, searchDebounced])
 
   useEffect(() => {
     setTablePage(1)
-  }, [filter, searchDebounced, tab])
+  }, [filter, searchDebounced])
 
   useEffect(() => {
-    if (operadorNetflix) return
-    api.get<Servidor[]>('/api/servidores').then(setServidores).catch(() => setServidores([]))
-    api.get<Revendedor[]>('/api/revendedores').then(setRevendedores).catch(() => setRevendedores([]))
-  }, [operadorNetflix])
-
-  useEffect(() => {
-    if (operadorIptv) return
     api.get<Sala[]>('/api/salas').then(setSalas).catch(() => setSalas([]))
-  }, [operadorIptv])
+  }, [])
 
   const totalTablePages = Math.max(1, Math.ceil(clients.length / ROWS_PER_PAGE))
   const tablePageClamped = Math.min(tablePage, totalTablePages)
   const pagedClientes = clients.slice((tablePageClamped - 1) * ROWS_PER_PAGE, tablePageClamped * ROWS_PER_PAGE)
 
-  const showIptvTab = !operadorNetflix
-  const showNetflixTab = !operadorIptv
-
-  function switchTab(newTab: 'iptv' | 'netflix') {
-    setTab(newTab)
-    setFilter((f) => ({ ...f, servico: newTab }))
-    if (newTab !== 'netflix') setShowNetflixPins(false)
-  }
-
   const stats = {
     total: clients.length,
     ativos: clients.filter((c) => c.status === 'ativo').length,
+    inativos: clients.filter((c) => c.status === 'inativo').length,
     vencidos: clients.filter((c) => c.status === 'vencido').length,
     vencendo: clients.filter((c) => {
       const d = daysUntil(c.dataFim)
@@ -272,20 +249,15 @@ export default function Clientes() {
     if (!(form.portalPin ?? '').trim()) return 'PIN da área cliente é obrigatório.'
     if (String(form.portalPin).trim().length < 4) return 'PIN da área cliente deve ter pelo menos 4 caracteres.'
     if (!form.plano || !String(form.plano).trim()) {
-      return form.servico === 'iptv' ? 'Selecione o plano IPTV.' : 'Selecione o plano Netflix.'
+      return 'Selecione o plano Netflix.'
     }
-    if (isPlanoValorManual(form.servico, form.plano) && (!form.valor || Number(form.valor) <= 0)) {
+    if (isPlanoValorManual(form.plano) && (!form.valor || Number(form.valor) <= 0)) {
       return 'Valor mensal é obrigatório.'
     }
-    if (form.servico === 'iptv') {
-      if (!(form.perfil ?? '').trim()) return 'Nome de utilizador é obrigatório.'
-      if (!form.dataFim || !String(form.dataFim).trim()) return 'Data fim é obrigatória.'
-    }
-    if (form.servico === 'netflix') {
-      if (!(form.perfil ?? '').trim()) return 'Perfil é obrigatório.'
-      if (!(form.pin ?? '').trim()) return 'PIN Netflix é obrigatório.'
-      if (form.plano === 'Plano Room' && !form.salaId) return 'Selecione a sala (conta) Netflix.'
-    }
+    if (!form.mesesPagos) return 'Selecione quantos meses o cliente pagou.'
+    if (!(form.perfil ?? '').trim()) return 'Perfil é obrigatório.'
+    if (!(form.pin ?? '').trim()) return 'PIN Netflix é obrigatório.'
+    if (form.plano === 'Plano Room' && !form.salaId) return 'Selecione a sala (conta) Netflix.'
     return null
   }
 
@@ -298,20 +270,15 @@ export default function Clientes() {
       return 'PIN da área cliente deve ter pelo menos 4 caracteres.'
     }
     if (!form.plano || !String(form.plano).trim()) {
-      return form.servico === 'iptv' ? 'Selecione o plano IPTV.' : 'Selecione o plano Netflix.'
+      return 'Selecione o plano Netflix.'
     }
-    if (isPlanoValorManual(form.servico, form.plano) && (!form.valor || Number(form.valor) <= 0)) {
+    if (isPlanoValorManual(form.plano) && (!form.valor || Number(form.valor) <= 0)) {
       return 'Valor mensal é obrigatório.'
     }
-    if (form.servico === 'iptv') {
-      if (!(form.perfil ?? '').trim()) return 'Nome de utilizador é obrigatório.'
-      if (!form.dataFim || !String(form.dataFim).trim()) return 'Data fim é obrigatória.'
-    }
-    if (form.servico === 'netflix') {
-      if (!(form.perfil ?? '').trim()) return 'Perfil é obrigatório.'
-      if (!(form.pin ?? '').trim()) return 'PIN Netflix é obrigatório.'
-      if (form.plano === 'Plano Room' && !form.salaId) return 'Selecione a sala (conta) Netflix.'
-    }
+    if (!form.dataFim || !String(form.dataFim).trim()) return 'Data fim é obrigatória.'
+    if (!(form.perfil ?? '').trim()) return 'Perfil é obrigatório.'
+    if (!(form.pin ?? '').trim()) return 'PIN Netflix é obrigatório.'
+    if (form.plano === 'Plano Room' && !form.salaId) return 'Selecione a sala (conta) Netflix.'
     return null
   }
 
@@ -329,23 +296,25 @@ export default function Clientes() {
         return
       }
     }
+    setSaving(true)
     try {
       if (modal === 'new') {
         const body: Record<string, unknown> = {
           ...form,
-          dataFim: form.dataFim || undefined,
-          servidorId: form.servidorId || null,
-          revendedorId: form.revendedorId || null,
+          dataFim: undefined,
+          mesesPagos: form.mesesPagos || undefined,
           localizacao: form.localizacao || null,
           salaId: form.salaId ?? null,
         }
         delete body.areaClienteAtiva
         delete body.removerPinPortal
         body.portalPin = String(form.portalPin).trim()
-        await api.post<Client>('/api/clients', body)
+        await api.post<Client>('/api/clients', body);
+
       } else if (form.id) {
         const patch: Record<string, unknown> = { ...form, salaId: form.salaId ?? null }
         delete patch.areaClienteAtiva
+        delete patch.mesesPagos
         delete patch.removerPinPortal
         delete patch.portalPin
         if (form.removerPinPortal) patch.portalPin = ''
@@ -354,17 +323,15 @@ export default function Clientes() {
       }
       setModal(null)
       {
-        const serv = (servicoFixo ?? tab) as 'iptv' | 'netflix'
-        const defs = planoPredefinido(serv)
+        const defs = planoPredefinido()
         setForm({
           nome: '',
           whatsapp: emptyWhatsapp(),
           localizacao: '',
-          servico: serv,
+          servico: 'netflix',
           plano: defs.plano,
           valor: defs.valor,
           dataFim: '',
-          revendedorId: null,
           portalPin: '',
           removerPinPortal: false,
         })
@@ -372,34 +339,19 @@ export default function Clientes() {
       load()
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Erro ao guardar')
-    }
-  }
-
-  async function confirmarRenovar() {
-    if (!clientRenovar) return
-    if (renovarMeses === '') {
-      showWarning('Selecione quantos meses estão a ser pagos.')
-      return
-    }
-    const meses = Math.min(24, Math.max(1, renovarMeses))
-    try {
-      await api.post(`/api/clients/${clientRenovar.id}/renovar`, { meses })
-      setClientRenovar(null)
-      setRenovarMeses('')
-      load()
-    } catch (e) {
-      showError(e instanceof Error ? e.message : 'Erro ao renovar cliente')
+    } finally {
+      setSaving(false)
     }
   }
 
   async function confirmarSuspender() {
     if (!clientSuspender) return
     try {
-      await api.post(`/api/clients/${clientSuspender.id}/suspender`)
+      await api.post(`/api/clients/${clientSuspender.id}/inativar`)
       setClientSuspender(null)
       load()
     } catch (e) {
-      showError(e instanceof Error ? e.message : 'Erro')
+      showError(e instanceof Error ? e.message : 'Erro ao inativar cliente')
     }
   }
 
@@ -416,12 +368,19 @@ export default function Clientes() {
 
   async function atribuirSala() {
     if (!clientSala) return
+    const destino = salaIdSelect === '' ? null : salas.find((s) => s.id === salaIdSelect)
     try {
-      await api.patch(`/api/clients/${clientSala.id}`, { salaId: salaIdSelect === '' ? null : salaIdSelect })
+      await api.patch(`/api/clients/${clientSala.id}`, { salaId: destino?.id ?? null })
+      showInfo(
+        destino
+          ? `${clientSala.nome} ${clientSala.salaId ? 'transferido(a)' : 'atribuído(a)'} para "${destino.nome}".`
+          : `${clientSala.nome} ficou sem sala.`
+      )
       setModal(null)
       setClientSala(null)
       setSalaIdSelect('')
       load()
+      api.get<Sala[]>('/api/salas').then(setSalas).catch(() => {})
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Erro ao guardar sala')
     }
@@ -451,52 +410,23 @@ export default function Clientes() {
               Clientes
             </h1>
             <p className="text-gray-400 text-sm mt-0.5">
-              Alterna entre IPTV e Netflix. Filtre por servidor ou revendedor (IPTV), sala (Netflix) e estado.
+              Clientes Netflix. Filtre por sala, estado e vencimento.
             </p>
           </div>
         </div>
       </div>
 
-      {/* Abas IPTV | NETFLIX + stats + Novo cliente */}
+      {/* Stats + Novo cliente */}
       <div className="flex flex-wrap items-center gap-3">
-        {(showIptvTab || showNetflixTab) && (
-          <div className="flex gap-1 p-1 rounded-xl bg-netflix-panel/60 border border-netflix-border/80">
-            {showIptvTab && (
-              <button
-                type="button"
-                onClick={() => switchTab('iptv')}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  tab === 'iptv'
-                    ? 'bg-primary-600 text-white shadow-lg shadow-primary-900/30'
-                    : 'text-gray-400 hover:text-white hover:bg-netflix-hover/80'
-                }`}
-              >
-                <Tv className="w-4 h-4" />
-                IPTV
-              </button>
-            )}
-            {showNetflixTab && (
-              <button
-                type="button"
-                onClick={() => switchTab('netflix')}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  tab === 'netflix'
-                    ? 'bg-primary-600 text-white shadow-lg shadow-primary-900/30'
-                    : 'text-gray-400 hover:text-white hover:bg-netflix-hover/80'
-                }`}
-              >
-                <Film className="w-4 h-4" />
-                NETFLIX
-              </button>
-            )}
-          </div>
-        )}
         <div className="flex flex-1 flex-wrap items-center justify-center gap-2">
           <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-netflix-panel/80 border border-netflix-border/60 text-gray-300 text-sm">
             <span className="font-semibold text-white">{stats.total}</span> total
           </span>
           <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-900/30 border border-green-700/40 text-green-300 text-sm">
             <span className="font-semibold">{stats.ativos}</span> ativos
+          </span>
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-900/30 border border-amber-700/40 text-amber-300 text-sm">
+            <span className="font-semibold">{stats.inativos}</span> inativos
           </span>
           <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-900/30 border border-amber-700/40 text-amber-300 text-sm">
             <span className="font-semibold">{stats.vencendo}</span> a vencer (7 dias)
@@ -506,34 +436,31 @@ export default function Clientes() {
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0 ml-auto">
-          {tab === 'netflix' && (
-            <button
-              type="button"
-              onClick={() => setShowNetflixPins((v) => !v)}
-              className={`flex items-center gap-2 py-2.5 px-4 rounded-xl text-sm font-medium border transition-colors ${
-                showNetflixPins
-                  ? 'border-primary-500/45 bg-primary-500/15 text-primary-200 hover:bg-primary-500/25'
-                  : 'border-netflix-border/80 bg-netflix-panel text-gray-300 hover:bg-netflix-hover hover:text-white hover:border-netflix-hover'
-              }`}
-              title={showNetflixPins ? 'Ocultar PIN Netflix na tabela' : 'Mostrar PIN Netflix na tabela'}
-            >
-              {showNetflixPins ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              {showNetflixPins ? 'Ocultar PIN' : 'Mostrar PIN'}
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setShowNetflixPins((v) => !v)}
+            className={`flex items-center gap-2 py-2.5 px-4 rounded-xl text-sm font-medium border transition-colors ${
+              showNetflixPins
+                ? 'border-primary-500/45 bg-primary-500/15 text-primary-200 hover:bg-primary-500/25'
+                : 'border-netflix-border/80 bg-netflix-panel text-gray-300 hover:bg-netflix-hover hover:text-white hover:border-netflix-hover'
+            }`}
+            title={showNetflixPins ? 'Ocultar PIN Netflix na tabela' : 'Mostrar PIN Netflix na tabela'}
+          >
+            {showNetflixPins ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            {showNetflixPins ? 'Ocultar PIN' : 'Mostrar PIN'}
+          </button>
           <button
             type="button"
             onClick={() => {
-              const defs = planoPredefinido(tab)
+              const defs = planoPredefinido()
               setForm({
                 nome: '',
                 whatsapp: emptyWhatsapp(),
                 localizacao: '',
-                servico: tab,
+                servico: 'netflix',
                 plano: defs.plano,
                 valor: defs.valor,
                 dataFim: '',
-                revendedorId: null,
                 portalPin: '',
                 removerPinPortal: false,
               })
@@ -549,62 +476,22 @@ export default function Clientes() {
 
       {/* Barra de filtros */}
       <div className="flex flex-wrap items-center gap-2 p-4 rounded-xl bg-netflix-card/60 border border-netflix-border/80">
-        {tab === 'iptv' && (
-          <>
-            <div className="w-44 min-w-[11rem] sm:w-48">
-              <RoveSelect
-                compact
-                value={filter.servidorId}
-                onChange={(e) => setFilter((f) => ({ ...f, servidorId: e.target.value }))}
-                placeholder="Todos os servidores"
-                title="Filtrar por servidor"
-              >
-                <option value="">Todos os servidores</option>
-                {servidores.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.tipo === 'secundario' && s.servidor
-                      ? `${s.nome} (Secundário → ${s.servidor.nome})`
-                      : s.nome}
-                  </option>
-                ))}
-              </RoveSelect>
-            </div>
-            <div className="w-44 min-w-[11rem] sm:w-48">
-              <RoveSelect
-                compact
-                value={filter.revendedorId}
-                onChange={(e) => setFilter((f) => ({ ...f, revendedorId: e.target.value }))}
-                placeholder="Todos os revendedores"
-                title="Filtrar por revendedor"
-              >
-                <option value="">Todos os revendedores</option>
-                {revendedores.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.nome}
-                  </option>
-                ))}
-              </RoveSelect>
-            </div>
-          </>
-        )}
-        {tab === 'netflix' && (
-          <div className="w-44 min-w-[11rem] sm:w-48">
-            <RoveSelect
-              compact
-              value={filter.salaId ?? ''}
-              onChange={(e) => setFilter((f) => ({ ...f, salaId: e.target.value }))}
-              placeholder="Todas as salas"
-              title="Filtrar por sala"
-            >
-              <option value="">Todas as salas</option>
-              {salas.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.nome}
-                </option>
-              ))}
-            </RoveSelect>
-          </div>
-        )}
+        <div className="w-44 min-w-[11rem] sm:w-48">
+          <RoveSelect
+            compact
+            value={filter.salaId ?? ''}
+            onChange={(e) => setFilter((f) => ({ ...f, salaId: e.target.value }))}
+            placeholder="Todas as salas"
+            title="Filtrar por sala"
+          >
+            <option value="">Todas as salas</option>
+            {salas.map((s) => (
+              <option key={s.id} value={s.id}>
+                {salaOpcao(s)}
+              </option>
+            ))}
+          </RoveSelect>
+        </div>
         <div className="w-40 min-w-[10rem]">
           <RoveSelect
             compact
@@ -615,10 +502,22 @@ export default function Clientes() {
           >
             <option value="">Todos os estados</option>
             <option value="ativo">Ativo</option>
+            <option value="inativo">Inativo</option>
             <option value="vencido">Vencido</option>
             <option value="cancelado">Cancelado</option>
           </RoveSelect>
         </div>
+        <button
+          type="button"
+          onClick={() => setFilter((f) => ({ ...f, status: f.status === 'inativo' ? '' : 'inativo' }))}
+          className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+            filter.status === 'inativo'
+              ? 'border-amber-500/60 bg-amber-500/15 text-amber-200'
+              : 'border-netflix-border bg-netflix-panel text-gray-300 hover:bg-netflix-hover hover:text-white'
+          }`}
+        >
+          {filter.status === 'inativo' ? 'Ver todos' : 'Área inativos'}
+        </button>
         <div className="w-44 min-w-[11rem]">
           <RoveSelect
             compact
@@ -662,6 +561,11 @@ export default function Clientes() {
           </div>
         ) : (
           <>
+          {filter.status === 'inativo' && (
+            <div className="border-b border-amber-500/30 bg-amber-950/20 px-4 py-3 text-sm text-amber-100">
+              Área de clientes inativos — ficam visíveis aqui até serem reativados.
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead className="bg-netflix-panel/80 text-gray-300 text-sm">
@@ -669,19 +573,13 @@ export default function Clientes() {
                   <th className="px-4 py-3.5 font-medium w-12 text-center">Nº</th>
                   <th className="px-4 py-3.5 font-medium">Cliente</th>
                   <th className="px-4 py-3.5 font-medium">Contacto</th>
-                  {tab === 'netflix' && <th className="px-4 py-3.5 font-medium">Perfil</th>}
-                  {tab === 'netflix' && <th className="px-4 py-3.5 font-medium">PIN</th>}
+                  <th className="px-4 py-3.5 font-medium">Perfil</th>
+                  <th className="px-4 py-3.5 font-medium">PIN</th>
                   <th className="px-4 py-3.5 font-medium">Localização</th>
-                  {tab === 'iptv' && (
-                    <>
-                      <th className="px-4 py-3.5 font-medium">Servidor</th>
-                      <th className="px-4 py-3.5 font-medium">Revendedor</th>
-                    </>
-                  )}
-                  {tab === 'netflix' && <th className="px-4 py-3.5 font-medium">Sala</th>}
+                  <th className="px-4 py-3.5 font-medium">Sala</th>
                   <th className="px-4 py-3.5 font-medium">Plano</th>
-                  {tab === 'iptv' && <th className="px-4 py-3.5 font-medium">Data fim</th>}
-                  {tab === 'netflix' && <th className="px-4 py-3.5 font-medium">Data renovação</th>}
+                  <th className="px-4 py-3.5 font-medium">Subscrição</th>
+                  <th className="px-4 py-3.5 font-medium" title="Renovação do dia 1 ao dia 10; depois fica vencido">Renovar até</th>
                   <th className="px-4 py-3.5 font-medium">Valor</th>
                   <th className="px-4 py-3.5 font-medium">Estado</th>
                   <th className="px-4 py-3.5 font-medium text-right">Ações</th>
@@ -711,74 +609,51 @@ export default function Clientes() {
                       <td className="px-4 py-3">
                         <RoveWhatsappLink value={c.whatsapp} />
                       </td>
-                      {tab === 'netflix' && (
-                        <td className="px-4 py-3 text-sm text-gray-300">{c.perfil || '—'}</td>
-                      )}
-                      {tab === 'netflix' && (
-                        <td className="px-4 py-3 text-sm text-gray-300 font-mono">
-                          {!c.pin ? '—' : showNetflixPins ? c.pin : '••••'}
-                        </td>
-                      )}
+                      <td className="px-4 py-3 text-sm text-gray-300">{c.perfil || '—'}</td>
+                      <td className="px-4 py-3 text-sm text-gray-300 font-mono">
+                        {!c.pin ? '—' : showNetflixPins ? c.pin : '••••'}
+                      </td>
                       <td className="px-4 py-3 text-sm text-gray-400">{c.localizacao || '—'}</td>
-                      {tab === 'iptv' && (
-                        <>
-                          <td className="px-4 py-3 text-sm text-gray-400">{c.servidor?.nome ?? '—'}</td>
-                          <td className="px-4 py-3 text-sm text-gray-400">{c.revendedor?.nome ?? '—'}</td>
-                        </>
-                      )}
-                      {tab === 'netflix' && (
-                        <td className="px-4 py-3 text-sm text-gray-400">
-                          {c.plano === 'Plano Room' ? (c.sala?.nome ?? '—') : '—'}
-                        </td>
-                      )}
+                      <td className="px-4 py-3 text-sm text-gray-400">
+                        {c.plano === 'Plano Room' ? (c.sala?.nome ?? '—') : '—'}
+                      </td>
                       <td className="px-4 py-3 text-sm">{c.plano}</td>
-                      {tab === 'iptv' && (
-                        <td className="px-4 py-3">
-                          <span className={`text-sm ${urgent ? 'text-amber-300 font-semibold' : alert ? 'text-amber-400 font-medium' : expired ? 'text-red-400 font-medium' : 'text-gray-300'}`}>
-                            {formatDate(c.dataFim)}
-                            {c.status === 'ativo' && (
-                              <span className="text-gray-500 text-xs ml-1">
-                                ({days > 0 ? `${days}d` : days === 0 ? 'hoje' : 'vencido'})
-                              </span>
-                            )}
-                          </span>
-                        </td>
-                      )}
-                      {tab === 'netflix' && (
-                        <td className="px-4 py-3">
-                          <span className={`text-sm ${urgent ? 'text-amber-300 font-semibold' : alert ? 'text-amber-400 font-medium' : expired ? 'text-red-400 font-medium' : 'text-gray-300'}`}>
-                            {formatDate(c.dataFim)}
-                            {c.status === 'ativo' && (
-                              <span className="text-gray-500 text-xs ml-1">
-                                ({days > 0 ? `${days}d` : days === 0 ? 'hoje' : 'vencido'})
-                              </span>
-                            )}
-                          </span>
-                        </td>
-                      )}
+                      <td className="px-4 py-3 text-sm text-gray-300">
+                        {c.dataSubscricao ? formatDate(c.dataSubscricao) : '—'}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`text-sm ${urgent ? 'text-amber-300 font-semibold' : alert ? 'text-amber-400 font-medium' : expired ? 'text-red-400 font-medium' : 'text-gray-300'}`}>
+                          {formatDate(c.dataFim)}
+                          {c.status === 'ativo' && (
+                            <span className="text-gray-500 text-xs ml-1">
+                              ({days > 0 ? `${days}d` : days === 0 ? 'hoje' : 'vencido'})
+                            </span>
+                          )}
+                        </span>
+                      </td>
                       <td className="px-4 py-3 text-sm font-medium text-white">{Number(c.valor).toFixed(2)} kz</td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${statusColors[c.status] || 'bg-gray-700 text-gray-300'}`}>
-                          {c.status}
+                          {statusLabels[c.status] || c.status}
                         </span>
                       </td>
                       <td className="px-4 py-3 relative">
                         <div className="flex justify-end gap-1">
-                          {c.status === 'ativo' && c.servico === 'netflix' && c.plano === 'Plano Room' && (
+                          {c.status !== 'cancelado' && c.plano === 'Plano Room' && (
                             <button
                               type="button"
                               onClick={() => {
                                 setClientSala(c)
-                                setSalaIdSelect(c.salaId ?? '')
+                                setSalaIdSelect('')
                                 setModal('sala')
                               }}
-                              title="Atribuir sala"
+                              title={c.salaId ? 'Transferir para outra sala' : 'Atribuir sala'}
                               className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-sky-500/50 bg-sky-500/10 text-sky-300 hover:bg-sky-500/30 hover:text-white transition-colors"
                             >
                               <LayoutGrid className="w-4 h-4" />
                             </button>
                           )}
-                          {c.status === 'ativo' && (
+                          {(c.status === 'ativo' || c.status === 'vencido') && (
                             <button
                               type="button"
                               onClick={() => {
@@ -796,34 +671,31 @@ export default function Clientes() {
                               <Edit2 className="w-4 h-4" />
                             </button>
                           )}
-                          {c.status === 'ativo' && (
+                          {(c.status === 'ativo' || c.status === 'vencido') && (
                             <button
                               type="button"
-                              onClick={() => {
-                                setClientRenovar(c)
-                                setRenovarMeses('')
-                              }}
-                              title="Renovar (vencimento dia 11)"
+                              onClick={() => setClientPagamentos(c)}
+                              title={c.status === 'vencido' ? 'Renovar (registar pagamento)' : 'Pagamentos (histórico / pagar meses adiantados)'}
                               className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-green-500/50 bg-green-500/10 text-green-300 hover:bg-green-500/30 hover:text-white transition-colors"
                             >
-                              <RefreshCw className="w-4 h-4" />
-                            </button>
-                          )}
-                          {c.status === 'ativo' && (
-                            <button
-                              type="button"
-                              onClick={() => setClientSuspender(c)}
-                              title="Suspender"
-                              className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-amber-500/50 bg-amber-500/10 text-amber-300 hover:bg-amber-500/30 hover:text-white transition-colors"
-                            >
-                              <AlertTriangle className="w-4 h-4" />
+                              {c.status === 'vencido' ? <RefreshCw className="w-4 h-4" /> : <Wallet className="w-4 h-4" />}
                             </button>
                           )}
                           {c.status === 'vencido' && (
                             <button
                               type="button"
+                              onClick={() => setClientSuspender(c)}
+                              title="Inativar"
+                              className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-amber-500/50 bg-amber-500/10 text-amber-300 hover:bg-amber-500/30 hover:text-white transition-colors"
+                            >
+                              <Ban className="w-4 h-4" />
+                            </button>
+                          )}
+                          {c.status === 'inativo' && (
+                            <button
+                              type="button"
                               onClick={() => setClientAtivar(c)}
-                              title="Ativar"
+                              title="Reativar"
                               className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-green-500/50 bg-green-500/10 text-green-300 hover:bg-green-500/30 hover:text-white transition-colors"
                             >
                               <CheckCircle className="w-4 h-4" />
@@ -854,12 +726,12 @@ export default function Clientes() {
         )}
         {!loading && clients.length === 0 && (
           <div className="p-12 text-center text-gray-400">
-            {tab === 'iptv' ? 'Nenhum cliente IPTV encontrado.' : 'Nenhum cliente Netflix encontrado.'} Ajuste os filtros ou adicione um novo cliente.
+            Nenhum cliente Netflix encontrado. Ajuste os filtros ou adicione um novo cliente.
           </div>
         )}
       </div>
 
-      {/* Modal confirmar suspender */}
+      {/* Modal confirmar inativar */}
       {clientSuspender && (
         <RoveModalOverlay>
           <div className="bg-netflix-card rounded-2xl shadow-2xl border border-amber-500/30 max-w-md w-full overflow-hidden">
@@ -869,16 +741,16 @@ export default function Clientes() {
                   <AlertTriangle className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="text-xl font-semibold text-white">Suspender cliente</h3>
+                  <h3 className="text-xl font-semibold text-white">Inativar cliente</h3>
                   <p className="text-sm text-gray-400 mt-0.5">
-                    O cliente <span className="text-white font-medium">{clientSuspender.nome}</span> passará a estado <span className="text-amber-400 font-medium">vencido</span>.
+                    O cliente <span className="text-white font-medium">{clientSuspender.nome}</span> passará a estado <span className="text-amber-400 font-medium">inativo</span>.
                   </p>
                 </div>
               </div>
               <div className="h-1 w-12 bg-amber-500 rounded-full mt-4" />
             </div>
             <div className="p-6">
-              <p className="text-sm text-gray-300">Tem a certeza que deseja suspender este cliente?</p>
+              <p className="text-sm text-gray-300">Tem a certeza que deseja inativar este cliente?</p>
             </div>
             <div className="flex gap-3 p-6 pt-0 border-t border-netflix-border/80">
               <button
@@ -888,13 +760,13 @@ export default function Clientes() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={confirmarSuspender}
+              <LoadingButton
+                onClick={() => run('suspender', confirmarSuspender)}
+                loading={busy === 'suspender'}
                 className="flex-1 py-2.5 px-4 bg-amber-600 text-white rounded-xl text-sm font-medium hover:bg-amber-700 transition-colors shadow-lg shadow-amber-900/30"
               >
-                Suspender
-              </button>
+                Inativar
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
@@ -942,13 +814,13 @@ export default function Clientes() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={confirmarExcluir}
+              <LoadingButton
+                onClick={() => run('excluir', confirmarExcluir)}
+                loading={busy === 'excluir'}
                 className="flex-1 py-2.5 px-4 bg-red-600 text-white rounded-xl text-sm font-medium hover:bg-red-700 transition-colors shadow-lg shadow-red-900/30"
               >
                 Excluir
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
@@ -983,83 +855,34 @@ export default function Clientes() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={confirmarAtivar}
+              <LoadingButton
+                onClick={() => run('ativar', confirmarAtivar)}
+                loading={busy === 'ativar'}
                 className="flex-1 py-2.5 px-4 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 transition-colors shadow-lg shadow-green-900/30"
               >
                 Ativar
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
       )}
 
-      {/* Modal Renovar cliente (meses de pagamento, vencimento dia 11) */}
-      {clientRenovar && (
-        <RoveModalOverlay>
-          <div className="bg-netflix-card rounded-2xl shadow-2xl border border-green-500/40 max-w-sm w-full overflow-hidden">
-            <div className="p-6 border-b border-netflix-border/80">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-green-500/20 text-green-400 ring-1 ring-green-500/30">
-                  <RefreshCw className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-semibold text-white">Renovar cliente</h3>
-                  <p className="text-sm text-gray-400 mt-0.5">
-                    <span className="text-white font-medium">{clientRenovar.nome}</span>
-                  </p>
-                  <div className="h-1 w-12 bg-green-500 rounded-full mt-2" />
-                </div>
-              </div>
-            </div>
-            <div className="p-6 space-y-4">
-              <p className="text-xs text-gray-500">
-                O vencimento será no dia <span className="text-gray-300 font-medium">11</span> de cada mês. Escolha quantos meses atribuir.
-              </p>
-              <div>
-                <RoveFormLabel required>Meses de pagamento</RoveFormLabel>
-                <RoveSelect
-                  compact
-                  required
-                  value={renovarMeses === '' ? '' : String(renovarMeses)}
-                  onChange={(e) => setRenovarMeses(e.target.value === '' ? '' : Number(e.target.value))}
-                  placeholder="Selecione os meses"
-                  title="Quantos meses de pagamento atribuir"
-                >
-                  <option value="">Selecione os meses</option>
-                  {Array.from({ length: 24 }, (_, i) => i + 1).map((n) => (
-                    <option key={n} value={n}>
-                      {mesesPagamentoLabel(n)}
-                    </option>
-                  ))}
-                </RoveSelect>
-              </div>
-            </div>
-            <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80">
-              <button
-                type="button"
-                onClick={() => { setClientRenovar(null); setRenovarMeses('') }}
-                className="flex-1 py-2.5 px-4 border border-netflix-border rounded-xl text-sm font-medium text-gray-300 bg-netflix-panel hover:bg-netflix-hover transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={confirmarRenovar}
-                disabled={renovarMeses === ''}
-                title={renovarMeses === '' ? 'Selecione os meses' : 'Confirmar renovação'}
-                className="flex-1 py-2.5 px-4 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 disabled:opacity-50 disabled:hover:bg-green-600 transition-colors shadow-lg shadow-green-900/30"
-              >
-                Renovar
-              </button>
-            </div>
-          </div>
-        </RoveModalOverlay>
+      {/* Pagamentos do cliente: histórico de meses pagos + registar novo pagamento */}
+      {clientPagamentos && (
+        <PagamentosClienteModal
+          client={clientPagamentos}
+          canDelete={role === 'admin' || role === 'financeiro'}
+          onClose={() => setClientPagamentos(null)}
+          onChanged={() => load()}
+        />
       )}
 
-      {/* Modal Atribuir sala (Netflix Plano Room) */}
-      {modal === 'sala' && clientSala && (
+      {/* Modal Atribuir / transferir sala (Netflix Plano Room) */}
+      {modal === 'sala' && clientSala && (() => {
+        const salaAtual = clientSala.salaId ? salas.find((s) => s.id === clientSala.salaId) : null
+        const destinos = salas.filter((s) => s.id !== clientSala.salaId)
+        const transferir = !!clientSala.salaId
+        return (
         <RoveModalOverlay dimClassName="bg-black/70">
           <div className="bg-netflix-card rounded-2xl shadow-2xl shadow-black/50 border border-netflix-border/80 max-w-md w-full overflow-hidden ring-1 ring-primary-500/10">
             <div className="p-6 pb-5 border-b border-netflix-border/80 bg-gradient-to-b from-primary-950/20 to-transparent">
@@ -1068,9 +891,15 @@ export default function Clientes() {
                   <LayoutGrid className="w-7 h-7" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-xl font-bold text-white tracking-tight">Atribuir sala</h3>
+                  <h3 className="text-xl font-bold text-white tracking-tight">
+                    {transferir ? 'Transferir de sala' : 'Atribuir sala'}
+                  </h3>
                   <p className="text-sm text-gray-400 mt-1.5">
                     Cliente: <span className="text-white font-semibold">{clientSala.nome}</span>
+                  </p>
+                  <p className="text-sm text-gray-400 mt-0.5">
+                    Sala atual:{' '}
+                    <span className="text-white font-medium">{salaAtual?.nome ?? clientSala.sala?.nome ?? 'Sem sala'}</span>
                   </p>
                   <div className="h-1 w-14 bg-primary-500 rounded-full mt-4 opacity-90" />
                 </div>
@@ -1078,9 +907,11 @@ export default function Clientes() {
             </div>
             <div className="p-6 bg-netflix-panel/30 space-y-3">
               <div>
-                <RoveFormLabel>Sala (conta)</RoveFormLabel>
+                <RoveFormLabel required>{transferir ? 'Transferir para' : 'Sala (conta)'}</RoveFormLabel>
                 <p className="text-[10px] text-gray-500 mb-2">
-                  Selecione a conta em que este cliente está no Plano Room.
+                  {transferir
+                    ? 'Escolha a sala para onde o cliente passa. A data fim do cliente não muda.'
+                    : 'Selecione a conta em que este cliente está no Plano Room.'}
                 </p>
                 <RoveSelect
                   compact
@@ -1089,14 +920,40 @@ export default function Clientes() {
                   placeholder="Selecione a sala"
                   title="Sala Netflix (Plano Room)"
                 >
-                  <option value="">— Nenhuma —</option>
-                  {salas.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.nome}
+                  <option value="">Selecione a sala</option>
+                  {destinos.map((s) => (
+                    <option key={s.id} value={s.id} disabled={salaCheia(s)}>
+                      {salaOpcao(s)}
                     </option>
                   ))}
                 </RoveSelect>
+                {destinos.length === 0 && (
+                  <p className="text-xs text-amber-400/90 mt-2">Não há outra sala disponível.</p>
+                )}
               </div>
+              {transferir && (
+                <LoadingButton
+                  loading={busy === 'retirar'}
+                  onClick={() => {
+                    setSalaIdSelect('')
+                    void run('retirar', async () => {
+                      try {
+                        await api.patch(`/api/clients/${clientSala.id}`, { salaId: null })
+                        showInfo(`${clientSala.nome} ficou sem sala.`)
+                        setModal(null)
+                        setClientSala(null)
+                        load()
+                        api.get<Sala[]>('/api/salas').then(setSalas).catch(() => {})
+                      } catch (e) {
+                        showError(e instanceof Error ? e.message : 'Erro ao retirar da sala')
+                      }
+                    })
+                  }}
+                  className="text-xs text-gray-400 hover:text-red-300 underline"
+                >
+                  Retirar da sala (ficar sem sala)
+                </LoadingButton>
+              )}
             </div>
             <div className="flex gap-2 p-4 border-t border-netflix-border/80 bg-netflix-card">
               <button
@@ -1106,17 +963,19 @@ export default function Clientes() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={atribuirSala}
-                className="flex-1 py-3 px-4 rounded-xl border border-primary-600 bg-primary-600 text-white text-sm font-semibold hover:bg-primary-500 hover:border-primary-500 active:bg-primary-700 transition-colors shadow-md shadow-primary-900/25"
+              <LoadingButton
+                onClick={() => run('sala', atribuirSala)}
+                loading={busy === 'sala'}
+                disabled={salaIdSelect === ''}
+                className="flex-1 py-3 px-4 rounded-xl border border-primary-600 bg-primary-600 text-white text-sm font-semibold hover:bg-primary-500 hover:border-primary-500 active:bg-primary-700 disabled:opacity-50 transition-colors shadow-md shadow-primary-900/25"
               >
-                Guardar
-              </button>
+                {transferir ? 'Transferir' : 'Guardar'}
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
-      )}
+        )
+      })()}
 
       {/* Modal novo/editar */}
       {modal && modal !== 'sala' && (
@@ -1153,6 +1012,7 @@ export default function Clientes() {
                       onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
                     >
                       <option value="ativo">Ativo</option>
+                      <option value="inativo">Inativo</option>
                       <option value="vencido">Vencido</option>
                       <option value="cancelado">Cancelado</option>
                     </RoveSelect>
@@ -1160,8 +1020,7 @@ export default function Clientes() {
                 )}
               </div>
             </div>
-            {(modal === 'new' || modal === 'edit') &&
-            (form.servico === 'iptv' || form.servico === 'netflix') ? (
+            {modal === 'new' || modal === 'edit' ? (
               <div className={`${compactClientForm ? 'p-4 space-y-3' : 'p-6 space-y-4'}`}>
                 <p className={`${compactClientForm ? 'text-[10px] text-gray-500 pb-0.5' : 'text-xs text-gray-500'}`}>
                   Campos com <span className="text-primary-400">*</span> são obrigatórios.
@@ -1267,16 +1126,10 @@ export default function Clientes() {
                       compactClientForm ? 'text-[10px] mb-2.5' : 'text-xs mb-3'
                     }`}
                   >
-                    {form.servico === 'iptv' ? 'Plano & servidor' : 'Plano & sala'}
+                    Plano & sala
                   </p>
                   <div
-                    className={
-                      form.servico === 'netflix'
-                        ? `grid grid-cols-2 ${compactClientForm ? 'gap-2' : 'gap-3'}`
-                        : compactClientForm
-                          ? 'space-y-3'
-                          : 'space-y-4'
-                    }
+                    className={`grid grid-cols-2 ${compactClientForm ? 'gap-2' : 'gap-3'}`}
                   >
                     <div>
                       <label
@@ -1285,158 +1138,70 @@ export default function Clientes() {
                         Plano
                         <RequiredMark />
                       </label>
-                      {form.servico === 'iptv' ? (
+                      <RoveSelect
+                        compact={compactClientForm}
+                        required
+                        value={
+                          PLANOS_NETFLIX.some((p) => p.id === form.plano)
+                            ? form.plano!
+                            : form.plano
+                              ? 'outro'
+                              : ''
+                        }
+                        onChange={(e) => {
+                          const v = e.target.value
+                          if (v === 'outro') {
+                            setForm((f) => ({ ...f, plano: 'Outro', valor: f.valor || 0 }))
+                          } else {
+                            const p = PLANOS_NETFLIX.find((x) => x.id === v)
+                            if (p) setForm((f) => ({ ...f, plano: p.id, valor: p.valor }))
+                          }
+                        }}
+                      >
+                        <option value="" disabled>
+                          Selecione o plano Netflix
+                        </option>
+                        {PLANOS_NETFLIX.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.label}
+                          </option>
+                        ))}
+                        <option value="outro">Outro (a especificar)</option>
+                      </RoveSelect>
+                    </div>
+                    <div>
+                      <label
+                        className={`block font-medium text-gray-300 ${compactClientForm ? 'text-xs mb-1' : 'text-sm mb-0.5'}`}
+                      >
+                        Sala (conta)
+                        {form.plano === 'Plano Room' && <RequiredMark />}
+                      </label>
+                      {form.plano === 'Plano Room' ? (
                         <RoveSelect
                           compact={compactClientForm}
                           required
-                          value={
-                            PLANOS_IPTV.some((p) => p.id === form.plano)
-                              ? form.plano!
-                              : form.plano
-                                ? 'outro'
-                                : ''
-                          }
+                          value={form.salaId ?? ''}
                           onChange={(e) => {
                             const v = e.target.value
-                            if (v === 'outro') {
-                              setForm((f) => ({ ...f, plano: 'Outro', valor: f.valor || 0 }))
-                            } else {
-                              const p = PLANOS_IPTV.find((x) => x.id === v)
-                              if (p) setForm((f) => ({ ...f, plano: p.id, valor: p.valor }))
-                            }
+                            setForm((f) => ({ ...f, salaId: v === '' ? null : Number(v) }))
                           }}
                         >
-                          <option value="" disabled>
-                            Selecione o plano IPTV
-                          </option>
-                          {PLANOS_IPTV.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.label}
+                          <option value="">Selecione a sala Netflix</option>
+                          {salas.map((s) => (
+                            // A sala atual do cliente em edição continua selecionável mesmo cheia.
+                            <option key={s.id} value={s.id} disabled={salaCheia(s) && s.id !== (modal === 'edit' ? clients.find((c) => c.id === form.id)?.salaId : undefined)}>
+                              {salaOpcao(s)}
                             </option>
                           ))}
-                          <option value="outro">Outro (a especificar)</option>
                         </RoveSelect>
                       ) : (
-                        <RoveSelect
-                          compact={compactClientForm}
-                          required
-                          value={
-                            PLANOS_NETFLIX.some((p) => p.id === form.plano)
-                              ? form.plano!
-                              : form.plano
-                                ? 'outro'
-                                : ''
-                          }
-                          onChange={(e) => {
-                            const v = e.target.value
-                            if (v === 'outro') {
-                              setForm((f) => ({ ...f, plano: 'Outro', valor: f.valor || 0 }))
-                            } else {
-                              const p = PLANOS_NETFLIX.find((x) => x.id === v)
-                              if (p) setForm((f) => ({ ...f, plano: p.id, valor: p.valor }))
-                            }
-                          }}
-                        >
-                          <option value="" disabled>
-                            Selecione o plano Netflix
-                          </option>
-                          {PLANOS_NETFLIX.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.label}
-                            </option>
-                          ))}
-                          <option value="outro">Outro (a especificar)</option>
-                        </RoveSelect>
+                        <div className={compactClientForm ? NEW_CLIENT_LOCKED_SM : NEW_CLIENT_LOCKED}>
+                          <span className="text-gray-400">Disponível apenas no Plano Room</span>
+                          <LockedFieldBadge label="Bloqueado" />
+                        </div>
                       )}
                     </div>
-                    {form.servico === 'netflix' && (
-                      <div>
-                        <label
-                          className={`block font-medium text-gray-300 ${compactClientForm ? 'text-xs mb-1' : 'text-sm mb-0.5'}`}
-                        >
-                          Sala (conta)
-                          {form.plano === 'Plano Room' && <RequiredMark />}
-                        </label>
-                        {form.plano === 'Plano Room' ? (
-                          <RoveSelect
-                            compact={compactClientForm}
-                            required
-                            value={form.salaId ?? ''}
-                            onChange={(e) => {
-                              const v = e.target.value
-                              const id = v === '' ? null : Number(v)
-                              const sala = id ? salas.find((s) => s.id === id) : null
-                              setForm((f) => ({
-                                ...f,
-                                salaId: id,
-                                dataFim: sala?.dataFim ? String(sala.dataFim).slice(0, 10) : f.dataFim,
-                              }))
-                            }}
-                          >
-                            <option value="">Selecione a sala Netflix</option>
-                            {salas.map((s) => (
-                              <option key={s.id} value={s.id}>
-                                {s.nome}
-                              </option>
-                            ))}
-                          </RoveSelect>
-                        ) : (
-                          <div className={compactClientForm ? NEW_CLIENT_LOCKED_SM : NEW_CLIENT_LOCKED}>
-                            <span className="text-gray-400">Disponível apenas no Plano Room</span>
-                            <LockedFieldBadge label="Bloqueado" />
-                          </div>
-                        )}
-                      </div>
-                    )}
                   </div>
-                  {form.servico === 'iptv' && (
-                    <div className={`grid grid-cols-2 ${compactClientForm ? 'gap-2 mt-2.5' : 'gap-3 mt-4'}`}>
-                      <div>
-                        <label
-                          className={`block font-medium text-gray-300 ${compactClientForm ? 'text-xs mb-1' : 'text-sm mb-0.5'}`}
-                        >
-                          Servidor
-                        </label>
-                        <RoveSelect
-                          compact={compactClientForm}
-                          value={form.servidorId ?? ''}
-                          onChange={(e) =>
-                            setForm((f) => ({ ...f, servidorId: e.target.value ? Number(e.target.value) : null }))
-                          }
-                        >
-                          <option value="">Selecione o servidor (opcional)</option>
-                          {servidores.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.tipo === 'secundario' && s.servidor
-                                ? `${s.nome} (Secundário → ${s.servidor.nome})`
-                                : s.nome}
-                            </option>
-                          ))}
-                        </RoveSelect>
-                      </div>
-                      <div>
-                        <label
-                          className={`block font-medium text-gray-300 ${compactClientForm ? 'text-xs mb-1' : 'text-sm mb-0.5'}`}
-                        >
-                          Revendedor
-                        </label>
-                        <RoveSelect
-                          compact={compactClientForm}
-                          value={form.revendedorId ?? ''}
-                          onChange={(e) =>
-                            setForm((f) => ({ ...f, revendedorId: e.target.value ? Number(e.target.value) : null }))
-                          }
-                        >
-                          <option value="">Selecione o revendedor (opcional)</option>
-                          {revendedores.map((r) => (
-                            <option key={r.id} value={r.id}>
-                              {r.nome}
-                            </option>
-                          ))}
-                        </RoveSelect>
-                      </div>
-                    </div>
-                  )}
                 </div>
 
                 <div className={`border-t border-netflix-border/60 ${compactClientForm ? 'pt-3' : 'pt-4'}`}>
@@ -1445,10 +1210,9 @@ export default function Clientes() {
                       compactClientForm ? 'text-[10px] mb-2.5' : 'text-xs mb-3'
                     }`}
                   >
-                    {form.servico === 'iptv' ? 'Acesso & pagamento' : 'Perfil & pagamento'}
+                    Perfil & pagamento
                   </p>
                   <div className={compactClientForm ? 'space-y-3' : 'space-y-4'}>
-                    {form.servico === 'netflix' ? (
                       <div className={`grid grid-cols-2 ${compactClientForm ? 'gap-2' : 'gap-3'}`}>
                         <div>
                           <label
@@ -1483,32 +1247,28 @@ export default function Clientes() {
                           />
                         </div>
                       </div>
-                    ) : (
-                      <div>
-                        <label
-                          className={`block font-medium text-gray-300 ${compactClientForm ? 'text-xs mb-1' : 'text-sm mb-0.5'}`}
-                        >
-                          Nome de utilizador
-                          <RequiredMark />
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={form.perfil || ''}
-                          onChange={(e) => setForm((f) => ({ ...f, perfil: e.target.value }))}
-                          className={compactClientForm ? NEW_CLIENT_INPUT_SM : NEW_CLIENT_INPUT}
-                          placeholder="Ex: nome de utilizador da linha"
-                        />
-                      </div>
-                    )}
+                    <div>
+                      <label
+                        className={`block font-medium text-gray-300 ${compactClientForm ? 'text-xs mb-1' : 'text-sm mb-0.5'}`}
+                      >
+                        Data de subscrição
+                      </label>
+                      <RoveDatePicker
+                        compact={compactClientForm}
+                        allowPastDates
+                        value={form.dataSubscricao ? String(form.dataSubscricao).slice(0, 10) : ''}
+                        onChange={(dataSubscricao) => setForm((f) => ({ ...f, dataSubscricao }))}
+                        title="Data em que o cliente subscreveu o serviço"
+                        placeholder="Selecionar data"
+                      />
+                    </div>
                     {(() => {
                       const valorBloqueado =
-                        (form.servico === 'iptv' && PLANOS_IPTV.some((p) => p.id === form.plano)) ||
-                        (form.servico === 'netflix' && PLANOS_NETFLIX.some((p) => p.id === form.plano))
-                      const valorObrigatorio = isPlanoValorManual(form.servico, form.plano)
-                      const dataFimBloqueada = form.servico === 'netflix'
-                      const dataFimTexto = form.dataFim
-                        ? new Date(String(form.dataFim).slice(0, 10)).toLocaleDateString('pt-PT')
+                        PLANOS_NETFLIX.some((p) => p.id === form.plano)
+                      const valorObrigatorio = isPlanoValorManual(form.plano)
+                      // Novo cliente: os meses pagos começam no mês atual; renova até ao dia 10 do mês seguinte ao último.
+                      const pagoAteNovo = form.mesesPagos
+                        ? limiteRenovacaoAposMeses(new Date(), Number(form.mesesPagos)).toLocaleDateString('pt-PT')
                         : '—'
 
                       return (
@@ -1540,7 +1300,35 @@ export default function Clientes() {
                           />
                         )}
                       </div>
-                      {form.servico === 'iptv' ? (
+                      {modal === 'new' ? (
+                        <div>
+                          <label
+                            className={`block font-medium text-gray-300 ${compactClientForm ? 'text-xs mb-1' : 'text-sm mb-0.5'}`}
+                          >
+                            Meses pagos
+                            <RequiredMark />
+                          </label>
+                          <RoveSelect
+                            compact={compactClientForm}
+                            required
+                            value={form.mesesPagos ? String(form.mesesPagos) : ''}
+                            onChange={(e) =>
+                              setForm((f) => ({ ...f, mesesPagos: e.target.value === '' ? '' : Number(e.target.value) }))
+                            }
+                            title="Quantos meses o cliente pagou agora"
+                          >
+                            <option value="">Selecione os meses</option>
+                            {Array.from({ length: 24 }, (_, i) => i + 1).map((n) => (
+                              <option key={n} value={n}>
+                                {mesesPagamentoLabel(n)}
+                              </option>
+                            ))}
+                          </RoveSelect>
+                          <p className="text-[10px] text-gray-500 mt-1">
+                            Renovar até: <span className="text-gray-300 font-medium">{pagoAteNovo}</span> (dia 1 a 10)
+                          </p>
+                        </div>
+                      ) : (
                         <div>
                           <label
                             className={`block font-medium text-gray-300 ${compactClientForm ? 'text-xs mb-1' : 'text-sm mb-0.5'}`}
@@ -1550,38 +1338,18 @@ export default function Clientes() {
                           </label>
                           <RoveDatePicker
                             compact={compactClientForm}
+                            allowPastDates
                             value={form.dataFim ? String(form.dataFim).slice(0, 10) : ''}
                             onChange={(dataFim) => setForm((f) => ({ ...f, dataFim }))}
-                            title="Selecione a data de renovação"
+                            title="Correção manual. Para registar meses pagos use o botão Pagamentos."
                             placeholder="Selecionar data"
                           />
-                        </div>
-                      ) : (
-                        <div>
-                          <label
-                            className={`block font-medium text-gray-300 ${compactClientForm ? 'text-xs mb-1' : 'text-sm mb-0.5'}`}
-                          >
-                            {form.salaId ? 'Data fim (da sala)' : 'Data fim'}
-                          </label>
-                          {dataFimBloqueada ? (
-                            <div className={compactClientForm ? NEW_CLIENT_LOCKED_SM : NEW_CLIENT_LOCKED}>
-                              <span className="font-medium">{dataFimTexto}</span>
-                              <LockedFieldBadge label={form.salaId ? 'Da sala' : 'Aguarda sala'} />
-                            </div>
-                          ) : (
-                            <RoveDatePicker
-                              compact={compactClientForm}
-                              value={form.dataFim ? String(form.dataFim).slice(0, 10) : ''}
-                              onChange={(dataFim) => setForm((f) => ({ ...f, dataFim }))}
-                              placeholder="Selecionar data"
-                            />
-                          )}
                         </div>
                       )}
                     </div>
                       )
                     })()}
-                    {form.servico === 'netflix' && (() => {
+                    {(() => {
                       const planoNetflix = PLANOS_NETFLIX.find((p) => p.id === form.plano)
                       const valorInscricao = planoNetflix?.inscricao
                       const inscricaoPaga = form.inscricaoPaga === true
@@ -1653,15 +1421,15 @@ export default function Clientes() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
+              <LoadingButton
                 onClick={saveClient}
-                className={`flex-1 bg-primary-600 text-white font-medium hover:bg-primary-700 transition-colors shadow-lg shadow-primary-900/30 ${
+                loading={saving}
+                className={`flex-1 bg-primary-600 text-white font-medium hover:bg-primary-700 transition-colors shadow-lg shadow-primary-900/30 disabled:opacity-50 disabled:pointer-events-none ${
                   compactClientForm ? 'py-1.5 px-3 rounded-lg text-xs' : 'py-2.5 px-4 rounded-xl text-sm'
                 }`}
               >
-                Guardar
-              </button>
+                {saving ? 'A guardar...' : 'Guardar'}
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>

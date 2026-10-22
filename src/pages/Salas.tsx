@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import { RoveModalOverlay } from '../components/RoveModalOverlay'
 import { motion } from 'framer-motion'
-import { Plus, Edit2, Trash2, LayoutGrid, AlertTriangle, CheckCircle, Eye, EyeOff, RefreshCw, Search } from 'lucide-react'
+import { Plus, Edit2, Trash2, LayoutGrid, AlertTriangle, CheckCircle, Eye, EyeOff, RefreshCw, Search, Info } from 'lucide-react'
 import { RoveDatePicker } from '../components/RoveDatePicker'
 import { RoveSelect } from '../components/RoveSelect'
-import { ROVE_FORM_INPUT_SM, RoveFormLabel } from '../components/roveFormUi'
+import { ROVE_FORM_INPUT_SM, RoveFormLabel, mesesPagamentoLabel } from '../components/roveFormUi'
 import { api } from '../api/client'
 import { useAlert } from '../contexts/AlertContext'
 import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
+import { SalaDetalhesModal } from '../components/SalaDetalhesModal'
+import { LoadingButton } from '../components/LoadingButton'
+import { useBusy } from '../lib/useBusy'
+import { MAX_CLIENTES_POR_SALA, SALA_CUSTO_MENSAL } from '../lib/planos'
 
 interface Sala {
   id: number
@@ -18,6 +22,13 @@ interface Sala {
   dataFim: string | null
   status: string
   totalClientes: number
+  /** Clientes não cancelados (ocupam lugar; máximo MAX_CLIENTES_POR_SALA). */
+  lugaresOcupados?: number
+}
+
+function todayIso() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 export default function Salas() {
@@ -28,7 +39,14 @@ export default function Salas() {
   const [salaSuspender, setSalaSuspender] = useState<Sala | null>(null)
   const [salaAtivar, setSalaAtivar] = useState<Sala | null>(null)
   const [salaToRenovar, setSalaToRenovar] = useState<Sala | null>(null)
+  const [renovarMeses, setRenovarMeses] = useState(1)
+  const [renovarValor, setRenovarValor] = useState('')
+  const [renovarData, setRenovarData] = useState(todayIso())
+  const [salaDetalhesId, setSalaDetalhesId] = useState<number | null>(null)
   const [salaToDelete, setSalaToDelete] = useState<Sala | null>(null)
+  const { busy, run } = useBusy()
+  /** Destino dos clientes ao apagar a sala: id da sala, ou 'nenhuma' para ficarem sem sala. */
+  const [deleteDestino, setDeleteDestino] = useState<number | 'nenhuma' | ''>('')
   const [showSenha, setShowSenha] = useState(false)
   const [tablePage, setTablePage] = useState(1)
   const [filter, setFilter] = useState({ status: '', vencendo: '' })
@@ -141,10 +159,37 @@ export default function Salas() {
     }
   }
 
+  /** Uma sala recebe os clientes de outra se não passar do máximo de clientes por sala. */
+  function cabeEm(destino: Sala, origem: Sala) {
+    return (destino.lugaresOcupados ?? 0) + (origem.lugaresOcupados ?? 0) <= MAX_CLIENTES_POR_SALA
+  }
+
+  function abrirExcluir(s: Sala) {
+    // Por omissão, propõe transferir os clientes para a primeira outra sala ativa onde caibam todos.
+    const candidatas = list.filter((x) => x.id !== s.id && cabeEm(x, s))
+    const outra = candidatas.find((x) => (x.status || 'ativo') === 'ativo') ?? candidatas[0]
+    setDeleteDestino(s.totalClientes > 0 ? (outra?.id ?? 'nenhuma') : 'nenhuma')
+    setSalaToDelete(s)
+  }
+
   async function confirmarExcluir() {
     if (!salaToDelete) return
+    if (salaToDelete.totalClientes > 0 && deleteDestino === '') {
+      showWarning('Escolha para onde vão os clientes desta sala.')
+      return
+    }
+    const destino = typeof deleteDestino === 'number' ? list.find((x) => x.id === deleteDestino) : null
     try {
-      await api.delete(`/api/salas/${salaToDelete.id}`)
+      await api.delete(
+        `/api/salas/${salaToDelete.id}${destino ? `?transferirPara=${destino.id}` : ''}`
+      )
+      showInfo(
+        salaToDelete.totalClientes > 0
+          ? destino
+            ? `Sala "${salaToDelete.nome}" excluída. ${salaToDelete.totalClientes} cliente(s) transferido(s) para "${destino.nome}".`
+            : `Sala "${salaToDelete.nome}" excluída. Os clientes ficaram sem sala.`
+          : `Sala "${salaToDelete.nome}" excluída.`
+      )
       setSalaToDelete(null)
       load()
     } catch (e) {
@@ -155,13 +200,26 @@ export default function Salas() {
   async function confirmarRenovar() {
     if (!salaToRenovar) return
     try {
-      await api.post(`/api/salas/${salaToRenovar.id}/pagar-mes`, {})
+      await api.post(`/api/salas/${salaToRenovar.id}/pagar-mes`, {
+        meses: renovarMeses,
+        valor: renovarValor === '' ? undefined : Number(renovarValor),
+        dataPagamento: renovarData,
+      })
       setSalaToRenovar(null)
-      showInfo(`Sala "${salaToRenovar.nome}" renovada por mais 1 mês.`)
+      showInfo(`Sala "${salaToRenovar.nome}" renovada por mais ${mesesPagamentoLabel(renovarMeses).toLowerCase()}.`)
       load()
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Erro ao renovar sala')
     }
+  }
+
+  const salasAtivas = list.filter((s) => (s.status || 'ativo') === 'ativo').length
+
+  function abrirRenovar(s: Sala) {
+    setRenovarMeses(1)
+    setRenovarValor('')
+    setRenovarData(todayIso())
+    setSalaToRenovar(s)
   }
 
   return (
@@ -174,18 +232,27 @@ export default function Salas() {
           </h2>
           <p className="text-sm text-gray-400 mt-0.5">Contas (salas) do Plano Room em que os clientes estão</p>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            setForm({ nome: '', email: '', senha: '', observacoes: '', dataFim: '' })
-            setShowSenha(false)
-            setModal('new')
-          }}
-          className="flex items-center gap-2 py-2 px-4 bg-primary-600 text-white rounded-lg hover:bg-primary-700 text-sm font-medium shadow-lg shadow-primary-900/30"
-        >
-          <Plus className="w-4 h-4" />
-          Nova sala
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="rounded-xl border border-emerald-600/40 bg-emerald-900/20 px-4 py-2">
+            <p className="text-[10px] uppercase tracking-wider text-emerald-300">Orçamento mensal das salas</p>
+            <p className="text-sm font-semibold text-white tabular-nums">
+              {salasAtivas} sala(s) ativa(s) × {SALA_CUSTO_MENSAL.toLocaleString('pt-PT')} kz ={' '}
+              {(salasAtivas * SALA_CUSTO_MENSAL).toLocaleString('pt-PT')} kz
+            </p>
+          </div>
+          <button
+              type="button"
+              onClick={() => {
+                setForm({ nome: '', email: '', senha: '', observacoes: '', dataFim: '' })
+                setShowSenha(false)
+                setModal('new')
+              }}
+              className="flex items-center gap-2 py-2 px-4 bg-primary-600 text-white rounded-lg hover:bg-primary-700 text-sm font-medium shadow-lg shadow-primary-900/30"
+            >
+              <Plus className="w-4 h-4" />
+              Nova sala
+            </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 p-4 rounded-xl bg-netflix-card/60 border border-netflix-border/80">
@@ -276,7 +343,14 @@ export default function Salas() {
                         <div className="p-1.5 rounded-lg bg-sky-600/20 text-sky-400">
                           <LayoutGrid className="w-4 h-4" />
                         </div>
-                        <span className="font-medium text-white">{s.nome}</span>
+                        <button
+                          type="button"
+                          onClick={() => setSalaDetalhesId(s.id)}
+                          className="font-medium text-white hover:text-sky-300 hover:underline text-left"
+                          title="Ver detalhes da sala"
+                        >
+                          {s.nome}
+                        </button>
                       </div>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-400 max-w-[10rem] truncate" title={s.email || undefined}>
@@ -286,7 +360,17 @@ export default function Salas() {
                       {s.senha ? '••••••••' : '—'}
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <span className="font-medium text-white">{s.totalClientes}</span>
+                      <span
+                        className={`font-medium ${
+                          (s.lugaresOcupados ?? 0) >= MAX_CLIENTES_POR_SALA ? 'text-amber-300' : 'text-white'
+                        }`}
+                        title={`${s.lugaresOcupados ?? 0} de ${MAX_CLIENTES_POR_SALA} lugares ocupados`}
+                      >
+                        {s.lugaresOcupados ?? 0}/{MAX_CLIENTES_POR_SALA}
+                      </span>
+                      {(s.lugaresOcupados ?? 0) >= MAX_CLIENTES_POR_SALA && (
+                        <span className="block text-[10px] text-amber-300/80">cheia</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <span className={`text-sm ${salaUrgente ? 'text-amber-300 font-semibold' : salaVencendo ? 'text-amber-400 font-medium' : salaVencida ? 'text-red-400 font-medium' : 'text-gray-400'}`}>
@@ -314,11 +398,19 @@ export default function Salas() {
                       <div className="flex justify-end gap-1">
                         <button
                           type="button"
-                          onClick={() => setSalaToRenovar(s)}
-                          title="Renovar (+1 mês)"
+                          onClick={() => abrirRenovar(s)}
+                          title="Renovar (registar pagamento da conta)"
                           className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-emerald-500/60 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/30 hover:text-white shadow-sm shadow-emerald-900/40 transition-colors"
                         >
                           <RefreshCw className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSalaDetalhesId(s.id)}
+                          title="Ver detalhes da sala (conta, clientes e pagamentos)"
+                          className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-sky-500/50 bg-sky-500/10 text-sky-300 hover:bg-sky-500/30 hover:text-white transition-colors"
+                        >
+                          <Info className="w-4 h-4" />
                         </button>
                         {(s.status || 'ativo') === 'ativo' ? (
                           <button
@@ -361,7 +453,7 @@ export default function Salas() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => setSalaToDelete(s)}
+                          onClick={() => abrirExcluir(s)}
                           title="Excluir"
                           className="inline-flex items-center justify-center h-8 px-3 rounded-lg border border-red-500/60 bg-red-500/15 text-red-300 hover:bg-red-500/30 hover:text-white shadow-sm shadow-red-900/40 transition-colors"
                         >
@@ -389,7 +481,7 @@ export default function Salas() {
 
       {salaToDelete && (
         <RoveModalOverlay>
-          <div className="bg-netflix-card rounded-2xl shadow-2xl border border-red-500/40 max-w-sm w-full overflow-hidden">
+          <div className="bg-netflix-card rounded-2xl shadow-2xl border border-red-500/40 max-w-md w-full overflow-hidden">
             <div className="p-6 border-b border-netflix-border/80">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 rounded-xl bg-red-500/20 text-red-400 ring-1 ring-red-500/30">
@@ -407,13 +499,36 @@ export default function Salas() {
                 <span className="font-medium text-white">{salaToDelete.nome}</span>?
               </p>
               <p className="text-xs text-gray-500">
-                Os clientes vinculados ficarão sem sala atribuída. Esta ação não pode ser desfeita.
+                O histórico de pagamentos da conta desta sala também é apagado. Esta ação não pode ser desfeita.
               </p>
               {salaToDelete.totalClientes > 0 && (
-                <p className="text-xs text-amber-400/90">
-                  Atenção: <span className="font-semibold">{salaToDelete.totalClientes}</span>{' '}
-                  {salaToDelete.totalClientes === 1 ? 'cliente está' : 'clientes estão'} associados a esta sala.
-                </p>
+                <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-950/20 p-3 space-y-2">
+                  <p className="text-xs text-amber-300">
+                    Esta sala tem <span className="font-semibold">{salaToDelete.totalClientes}</span>{' '}
+                    {salaToDelete.totalClientes === 1 ? 'cliente' : 'clientes'}. Deseja transferi-los para outra sala?
+                  </p>
+                  <RoveSelect
+                    compact
+                    value={deleteDestino === '' ? '' : String(deleteDestino)}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setDeleteDestino(v === '' ? '' : v === 'nenhuma' ? 'nenhuma' : Number(v))
+                    }}
+                    title="Para onde vão os clientes"
+                  >
+                    <option value="">Escolha uma opção</option>
+                    {list
+                      .filter((x) => x.id !== salaToDelete.id)
+                      .map((x) => (
+                        <option key={x.id} value={x.id} disabled={!cabeEm(x, salaToDelete)}>
+                          Transferir para {x.nome} ({x.lugaresOcupados ?? 0}/{MAX_CLIENTES_POR_SALA})
+                          {(x.status || 'ativo') !== 'ativo' ? ' — suspensa' : ''}
+                          {!cabeEm(x, salaToDelete) ? ' — sem lugares suficientes' : ''}
+                        </option>
+                      ))}
+                    <option value="nenhuma">Não transferir (clientes ficam sem sala)</option>
+                  </RoveSelect>
+                </div>
               )}
             </div>
             <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80">
@@ -424,13 +539,14 @@ export default function Salas() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={confirmarExcluir}
-                className="flex-1 py-2.5 px-4 bg-red-600 text-white rounded-xl text-sm font-medium hover:bg-red-700 transition-colors shadow-lg shadow-red-900/30"
+              <LoadingButton
+                onClick={() => run('excluir', confirmarExcluir)}
+                loading={busy === 'excluir'}
+                disabled={salaToDelete.totalClientes > 0 && deleteDestino === ''}
+                className="flex-1 py-2.5 px-4 bg-red-600 text-white rounded-xl text-sm font-medium hover:bg-red-700 disabled:opacity-50 transition-colors shadow-lg shadow-red-900/30"
               >
-                Excluir
-              </button>
+                {salaToDelete.totalClientes > 0 && typeof deleteDestino === 'number' ? 'Transferir e excluir' : 'Excluir'}
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
@@ -453,11 +569,35 @@ export default function Salas() {
                 </div>
               </div>
             </div>
-            <div className="p-6 space-y-2">
-              <p className="text-sm text-gray-300">
-                Tem a certeza que deseja renovar esta sala por mais{' '}
-                <span className="font-medium text-white">1 mês</span>?
-              </p>
+            <div className="p-6 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <RoveFormLabel required>Meses pagos</RoveFormLabel>
+                  <RoveSelect compact value={String(renovarMeses)} onChange={(e) => setRenovarMeses(Number(e.target.value) || 1)}>
+                    {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
+                      <option key={n} value={n}>
+                        {mesesPagamentoLabel(n)}
+                      </option>
+                    ))}
+                  </RoveSelect>
+                </div>
+                <div>
+                  <RoveFormLabel>Valor pago (kz)</RoveFormLabel>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={renovarValor}
+                    onChange={(e) => setRenovarValor(e.target.value)}
+                    placeholder={`${(SALA_CUSTO_MENSAL * renovarMeses).toLocaleString('pt-PT')} (${SALA_CUSTO_MENSAL.toLocaleString('pt-PT')} × ${renovarMeses})`}
+                    className={ROVE_FORM_INPUT_SM}
+                  />
+                </div>
+              </div>
+              <div>
+                <RoveFormLabel>Data do pagamento</RoveFormLabel>
+                <RoveDatePicker compact allowPastDates value={renovarData} onChange={setRenovarData} />
+              </div>
               <p className="text-xs text-gray-500">
                 A data fim da sala será prolongada
                 {salaToRenovar.dataFim && (
@@ -470,14 +610,8 @@ export default function Salas() {
                     )
                   </>
                 )}
-                . Os clientes do Plano Room nesta sala terão a mesma data fim atualizada.
+                . A data fim de cada cliente <span className="text-gray-300">não muda</span>: depende dos meses que cada um pagou.
               </p>
-              {salaToRenovar.totalClientes > 0 && (
-                <p className="text-xs text-gray-500">
-                  Clientes afetados:{' '}
-                  <span className="font-medium text-gray-300">{salaToRenovar.totalClientes}</span>
-                </p>
-              )}
             </div>
             <div className="flex gap-3 p-6 pt-4 border-t border-netflix-border/80">
               <button
@@ -487,16 +621,20 @@ export default function Salas() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={confirmarRenovar}
+              <LoadingButton
+                onClick={() => run('renovar', confirmarRenovar)}
+                loading={busy === 'renovar'}
                 className="flex-1 py-2.5 px-4 bg-emerald-600 text-white rounded-xl text-sm font-medium hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-900/30"
               >
                 Renovar
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
+      )}
+
+      {salaDetalhesId != null && (
+        <SalaDetalhesModal salaId={salaDetalhesId} onClose={() => setSalaDetalhesId(null)} />
       )}
 
       {/* Modal confirmar suspender sala */}
@@ -528,13 +666,13 @@ export default function Salas() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={confirmarSuspender}
+              <LoadingButton
+                onClick={() => run('suspender', confirmarSuspender)}
+                loading={busy === 'suspender'}
                 className="flex-1 py-2.5 px-4 bg-amber-600 text-white rounded-xl text-sm font-medium hover:bg-amber-700 transition-colors shadow-lg shadow-amber-900/30"
               >
                 Suspender
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
@@ -569,13 +707,13 @@ export default function Salas() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={confirmarAtivar}
+              <LoadingButton
+                onClick={() => run('ativar', confirmarAtivar)}
+                loading={busy === 'ativar'}
                 className="flex-1 py-2.5 px-4 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 transition-colors shadow-lg shadow-green-900/30"
               >
                 Ativar
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
@@ -671,7 +809,7 @@ export default function Salas() {
                 </p>
                 <div className="space-y-3">
                   <div>
-                    <RoveFormLabel>Data fim (partilhada pelos 4 utilizadores)</RoveFormLabel>
+                    <RoveFormLabel>Data fim da conta (pagamento Netflix)</RoveFormLabel>
                     <RoveDatePicker
                       compact
                       value={form.dataFim ? String(form.dataFim).slice(0, 10) : ''}
@@ -705,13 +843,13 @@ export default function Salas() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={save}
+              <LoadingButton
+                onClick={() => run('guardar', save)}
+                loading={busy === 'guardar'}
                 className="flex-1 py-1.5 px-3 bg-primary-600 text-white rounded-lg text-xs font-medium hover:bg-primary-700 transition-colors shadow-lg shadow-primary-900/30"
               >
                 Guardar
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>

@@ -5,8 +5,6 @@ import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Clientes from './pages/Clientes'
-import Servidores from './pages/Servidores'
-import Revendedores from './pages/Revendedores'
 import Salas from './pages/Salas'
 import Indicacoes from './pages/Indicacoes'
 import Audit from './pages/Audit'
@@ -20,7 +18,7 @@ import ClientArea from './pages/ClientArea'
 import { useClientPortal } from './contexts/ClientPortalContext'
 import { RequirePanelRole } from './components/RequirePanelRole'
 
-const STAFF = ['admin', 'geral', 'netflix', 'iptv', 'suporte'] as const
+const STAFF = ['admin', 'geral', 'netflix', 'suporte'] as const
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -32,7 +30,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     )
   }
   if (!user) {
-    return <Navigate to="/" replace />
+    return <Navigate to="/login" replace />
   }
   return <>{children}</>
 }
@@ -70,8 +68,6 @@ function App() {
       <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route path="/dashboard" element={<RequirePanelRole allow={[...STAFF]}><Dashboard /></RequirePanelRole>} />
         <Route path="/clientes" element={<RequirePanelRole allow={[...STAFF]}><Clientes /></RequirePanelRole>} />
-        <Route path="/servidores" element={<RequirePanelRole allow={['admin', 'geral', 'iptv', 'suporte']}><Servidores /></RequirePanelRole>} />
-        <Route path="/revendedores" element={<RequirePanelRole allow={['admin', 'geral', 'iptv', 'suporte']}><Revendedores /></RequirePanelRole>} />
         <Route path="/salas" element={<RequirePanelRole allow={['admin', 'geral', 'netflix', 'suporte']}><Salas /></RequirePanelRole>} />
         <Route path="/indicacoes" element={<RequirePanelRole allow={[...STAFF]}><Indicacoes /></RequirePanelRole>} />
         <Route path="/utilizadores" element={<RequirePanelRole allow={['admin']}><Utilizadores /></RequirePanelRole>} />

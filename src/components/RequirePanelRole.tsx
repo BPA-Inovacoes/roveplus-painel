@@ -9,7 +9,9 @@ export function RequirePanelRole({
   allow: string[]
   children: React.ReactNode
 }) {
+  console.log('RequirePanelRole allow:', allow)
   const { user } = useAuth()
+  console.log('RequirePanelRole user:', user);
   if (user && !allow.includes(user.role)) {
     return <Navigate to={defaultPanelPath(user.role)} replace />
   }

@@ -1,13 +1,15 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { LogIn, Mail, Lock } from 'lucide-react'
+import { LogIn, Mail, Lock, Eye, EyeOff } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { defaultPanelPath } from '../lib/panelRoles'
+import { LoadingButton } from '../components/LoadingButton'
 
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const { login } = useAuth()
@@ -60,7 +62,7 @@ export default function Login() {
               Olá Rove+!
             </h1>
             <p className="text-white/90 mt-6 text-lg lg:text-xl max-w-lg leading-relaxed">
-              Gestão de clientes Netflix e IPTV, servidores, indicações e renovação. Tudo num só painel.
+              Gestão de clientes Netflix, salas, pagamentos, indicações e renovação. Tudo num só painel.
             </p>
           </motion.div>
         </div>
@@ -116,24 +118,34 @@ export default function Login() {
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-primary-500/80 pointer-events-none" aria-hidden />
                 <input
                   id="login-password"
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-11 pr-4 py-3 bg-netflix-panel border border-primary-600/60 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-shadow"
+                  className="w-full pl-11 pr-12 py-3 bg-netflix-panel border border-primary-600/60 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-shadow"
                   placeholder="••••••••"
                   required
                   autoComplete="current-password"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-md text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+                  aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                  aria-pressed={showPassword}
+                  title={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                >
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
               </div>
             </div>
-            <button
+            <LoadingButton
               type="submit"
-              disabled={loading}
+              loading={loading}
               className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-primary-600 hover:bg-primary-700 text-white font-semibold rounded-lg disabled:opacity-50 transition-colors"
             >
-              <LogIn className="w-5 h-5" />
+              {!loading && <LogIn className="w-5 h-5" />}
               {loading ? 'A entrar...' : 'Entrar'}
-            </button>
+            </LoadingButton>
           </form>
 
           <p className="text-gray-500 text-sm mt-6">

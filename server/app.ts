@@ -8,8 +8,6 @@ import { getCorsOptions } from './middleware/corsConfig.js'
 import authRoutes from './routes/auth.js'
 import dashboardRoutes from './routes/dashboard.js'
 import clientsRoutes from './routes/clients.js'
-import servidoresRoutes from './routes/servidores.js'
-import revendedoresRoutes from './routes/revendedores.js'
 import salasRoutes from './routes/salas.js'
 import indicacoesRoutes from './routes/indicacoes.js'
 import auditRoutes from './routes/audit.js'
@@ -35,8 +33,6 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }))
 app.use('/api/auth', authRoutes)
 app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/clients', clientsRoutes)
-app.use('/api/servidores', servidoresRoutes)
-app.use('/api/revendedores', revendedoresRoutes)
 app.use('/api/salas', salasRoutes)
 app.use('/api/indicacoes', indicacoesRoutes)
 app.use('/api/audit', auditRoutes)

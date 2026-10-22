@@ -1,10 +1,8 @@
 /** Categorias de alerta WhatsApp configuráveis por operador. */
 export const PANEL_ALERT_CATEGORIES = [
   'clientes_netflix',
-  'clientes_iptv',
   'financeiro',
   'salas',
-  'servidores',
   'indicacoes',
   'utilizadores',
   'resumo',
@@ -30,14 +28,10 @@ export function defaultAlertScopesForRole(role: string): PanelAlertCategory[] {
       return ['financeiro', 'resumo']
     case 'netflix':
       return ['clientes_netflix', 'salas', 'resumo']
-    case 'iptv':
-      return ['clientes_iptv', 'servidores', 'resumo']
     case 'geral':
       return [
         'clientes_netflix',
-        'clientes_iptv',
         'salas',
-        'servidores',
         'indicacoes',
         'resumo',
       ]

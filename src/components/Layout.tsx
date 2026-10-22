@@ -3,8 +3,6 @@ import {
   LayoutDashboard,
   Users,
   UserCog,
-  Server,
-  Store,
   LayoutGrid,
   Gift,
   FileText,
@@ -22,13 +20,11 @@ import { useAuth } from '../contexts/AuthContext'
 import { tratamentoNome } from '../utils/tratamento'
 import { defaultPanelPath } from '../lib/panelRoles'
 
-const STAFF_ROLES = ['admin', 'geral', 'netflix', 'iptv', 'suporte'] as const
+const STAFF_ROLES = ['admin', 'geral', 'netflix', 'suporte'] as const
 
 const nav = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard', roles: [...STAFF_ROLES] },
+  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', roles: [...STAFF_ROLES] },
   { to: '/clientes', icon: Users, label: 'Clientes', roles: [...STAFF_ROLES] },
-  { to: '/servidores', icon: Server, label: 'Servidores', roles: ['admin', 'geral', 'iptv', 'suporte'] },
-  { to: '/revendedores', icon: Store, label: 'Revendedores', roles: ['admin', 'geral', 'iptv', 'suporte'] },
   { to: '/salas', icon: LayoutGrid, label: 'Salas', roles: ['admin', 'geral', 'netflix', 'suporte'] },
   { to: '/indicacoes', icon: Gift, label: 'Indicações', roles: [...STAFF_ROLES] },
   { to: '/utilizadores', icon: UserCog, label: 'Utilizadores', roles: ['admin'] },
@@ -40,7 +36,6 @@ const roleLabels: Record<string, string> = {
   admin: 'Administrador',
   geral: 'Operador (geral)',
   netflix: 'Operador Netflix',
-  iptv: 'Operador IPTV',
   suporte: 'Suporte',
   financeiro: 'Financeiro',
 }
