@@ -25,10 +25,6 @@ export interface ClientAssistantContext {
   valor: number
   perfil: string | null
   pin: string | null
-  iptvUser: string | null
-  iptvPass: string | null
-  iptvMac: string | null
-  iptvM3u: string | null
   inscricaoPaga: boolean | null
   indicacoes: number
   portalFirstLogin: boolean
@@ -63,7 +59,7 @@ function buildRenewMessage(ctx: ClientAssistantContext): string {
   const lines = [
     'Olá Rove+, quero renovar o meu plano.',
     `Cliente: ${ctx.nome}`,
-    `Plano: ${ctx.plano} (${ctx.servico === 'netflix' ? 'Netflix' : 'IPTV'})`,
+    `Plano: ${ctx.plano} (Netflix)`,
     `Vencimento: ${formatDate(ctx.dataFim)}`,
     `Valor mensal: ${formatValor(ctx.valor)}`,
   ]
@@ -116,19 +112,9 @@ export function getAssistantWelcome(ctx: ClientAssistantContext): AssistantReply
 }
 
 function buildCredentialsText(ctx: ClientAssistantContext): string {
-  if (ctx.servico === 'netflix') {
-    return [
-      ctx.perfil ? `Perfil: ${ctx.perfil}` : null,
-      ctx.pin ? `PIN: ${ctx.pin}` : null,
-    ]
-      .filter(Boolean)
-      .join('\n')
-  }
   return [
-    ctx.perfil || ctx.iptvUser ? `Utilizador: ${ctx.perfil || ctx.iptvUser}` : null,
-    ctx.iptvPass ? `Senha: ${ctx.iptvPass}` : null,
-    ctx.iptvMac ? `MAC: ${ctx.iptvMac}` : null,
-    ctx.iptvM3u ? `M3U: ${ctx.iptvM3u}` : null,
+    ctx.perfil ? `Perfil: ${ctx.perfil}` : null,
+    ctx.pin ? `PIN: ${ctx.pin}` : null,
   ]
     .filter(Boolean)
     .join('\n')
@@ -141,7 +127,7 @@ function tabFromNavigationMsg(msg: string): AssistantTab | null {
   if (matches(msg, 'indic')) return 'indicar'
   if (matches(msg, 'conta', 'segur')) return 'conta'
   if (matches(msg, 'inicio', 'início', 'home')) return 'inicio'
-  if (matches(msg, 'servico', 'serviço', 'netflix', 'iptv', 'credenc')) return 'servico'
+  if (matches(msg, 'servico', 'serviço', 'netflix', 'credenc')) return 'servico'
   return null
 }
 
@@ -172,7 +158,7 @@ export function getAssistantReply(ctx: ClientAssistantContext, rawMessage: strin
     if (dest) {
       const labels: Record<string, string> = {
         renovar: 'Renovar',
-        servico: ctx.servico === 'netflix' ? 'Netflix' : 'IPTV',
+        servico: 'Netflix',
         indicar: 'Indicar',
         conta: 'Conta',
         inicio: 'Início',
@@ -194,25 +180,11 @@ export function getAssistantReply(ctx: ClientAssistantContext, rawMessage: strin
         autoActions: [{ type: 'copy', label: 'PIN Netflix', text: ctx.pin }],
       }
     }
-    if (matches(msg, 'm3u') && ctx.iptvM3u) {
-      return {
-        reply: 'Copiei a **lista M3U** para a área de transferência.',
-        suggestions: ['Ver credenciais', 'Falar com suporte'],
-        autoActions: [{ type: 'copy', label: 'M3U', text: ctx.iptvM3u }],
-      }
-    }
     if (matches(msg, 'rove', 'id') && ctx.roveId) {
       return {
         reply: `Copiei o **ID ROVE** (${ctx.roveId}).`,
         suggestions: ['Falar com suporte', 'Estado da conta'],
         autoActions: [{ type: 'copy', label: 'ID ROVE', text: ctx.roveId }],
-      }
-    }
-    if (matches(msg, 'senha', 'password') && ctx.iptvPass) {
-      return {
-        reply: 'Copiei a **senha IPTV** para a área de transferência.',
-        suggestions: ['Copiar credenciais', 'Ver credenciais'],
-        autoActions: [{ type: 'copy', label: 'Senha IPTV', text: ctx.iptvPass }],
       }
     }
     const creds = buildCredentialsText(ctx)
@@ -246,7 +218,7 @@ export function getAssistantReply(ctx: ClientAssistantContext, rawMessage: strin
     return {
       reply: [
         estado,
-        `Plano: ${ctx.plano} (${ctx.servico === 'netflix' ? 'Netflix' : 'IPTV'})`,
+        `Plano: ${ctx.plano} (Netflix)`,
         `Próxima data: ${formatDate(ctx.dataFim)}`,
         `Valor mensal: ${formatValor(ctx.valor)}`,
         'Para renovar, use o WhatsApp da Rove+ ou a aba Renovar.',
@@ -258,7 +230,7 @@ export function getAssistantReply(ctx: ClientAssistantContext, rawMessage: strin
 
   if (matches(msg, 'plano', 'valor', 'preco', 'preço', 'quanto pago', 'mensal')) {
     return {
-      reply: `O seu plano é **${ctx.plano}** (${ctx.servico === 'netflix' ? 'Netflix' : 'IPTV'}), com valor mensal de **${formatValor(ctx.valor)}**. Renovação em ${formatDate(ctx.dataFim)}.`,
+      reply: `O seu plano é **${ctx.plano}** (Netflix), com valor mensal de **${formatValor(ctx.valor)}**. Renovação em ${formatDate(ctx.dataFim)}.`,
       suggestions: ['Pedir renovação', 'Ver credenciais', 'Estado da conta'],
     }
   }
@@ -267,65 +239,31 @@ export function getAssistantReply(ctx: ClientAssistantContext, rawMessage: strin
     const statusLabel =
       ctx.status === 'ativo' ? 'Ativa' : ctx.status === 'vencido' ? 'Vencida' : ctx.status === 'cancelado' ? 'Cancelada' : ctx.status
     return {
-      reply: `Estado da conta: **${statusLabel}**. Serviço: ${ctx.servico === 'netflix' ? 'Netflix' : 'IPTV'}. ${ctx.roveId ? `ID ROVE: ${ctx.roveId}.` : ''}`,
+      reply: `Estado da conta: **${statusLabel}**. Serviço: Netflix. ${ctx.roveId ? `ID ROVE: ${ctx.roveId}.` : ''}`,
       suggestions: ['Quando renovo?', 'Ver credenciais', 'Falar com suporte'],
     }
   }
 
-  if (matches(msg, 'credenc', 'utilizador', 'senha', 'password', 'login', 'acesso', 'm3u', 'mac', 'linha', 'dados')) {
-    if (ctx.servico === 'netflix') {
-      const parts = [
-        'As credenciais Netflix estão na aba **Netflix** (Serviço):',
-        ctx.perfil ? `• Perfil: ${ctx.perfil}` : null,
-        ctx.pin ? `• PIN do perfil: ${ctx.pin}` : null,
-        `• Abrir Netflix: ${NETFLIX_LOGIN_URL}`,
-        'Use o botão «Copiar» na aba para guardar o PIN.',
-      ].filter(Boolean)
-      return {
-        reply: parts.join('\n'),
-        suggestions: ['Abrir Netflix', 'Alterar PIN área cliente', 'Falar com suporte'],
-        actions: [
-          { type: 'tab', label: 'Ver credenciais', tab: 'servico' },
-          { type: 'link', label: 'Abrir Netflix', url: NETFLIX_LOGIN_URL },
-        ],
-      }
-    }
-
+  if (matches(msg, 'credenc', 'utilizador', 'senha', 'password', 'login', 'acesso', 'linha', 'dados')) {
     const parts = [
-      'As credenciais IPTV estão na aba **IPTV** (Serviço):',
-      ctx.perfil || ctx.iptvUser ? `• Utilizador: ${ctx.perfil || ctx.iptvUser}` : null,
-      ctx.iptvPass ? `• Senha: ${ctx.iptvPass}` : ctx.iptvPass === null ? '• Senha: contacte a Rove+ se não aparecer' : null,
-      ctx.iptvMac ? `• MAC: ${ctx.iptvMac}` : null,
-      ctx.iptvM3u ? '• Lista M3U disponível para copiar' : null,
-      'Na aba Serviço pode copiar cada campo ou «Copiar tudo».',
+      'As credenciais Netflix estão na aba **Netflix** (Serviço):',
+      ctx.perfil ? `• Perfil: ${ctx.perfil}` : null,
+      ctx.pin ? `• PIN do perfil: ${ctx.pin}` : null,
+      `• Abrir Netflix: ${NETFLIX_LOGIN_URL}`,
+      'Use o botão «Copiar» na aba para guardar o PIN.',
     ].filter(Boolean)
-
     return {
       reply: parts.join('\n'),
-      suggestions: ['Como usar M3U?', 'Quando renovo?', 'Falar com suporte'],
-      actions: [{ type: 'tab', label: 'Ver credenciais IPTV', tab: 'servico' }],
+      suggestions: ['Abrir Netflix', 'Alterar PIN área cliente', 'Falar com suporte'],
+      actions: [
+        { type: 'tab', label: 'Ver credenciais', tab: 'servico' },
+        { type: 'link', label: 'Abrir Netflix', url: NETFLIX_LOGIN_URL },
+      ],
     }
   }
 
-  if (ctx.servico === 'netflix' && matches(msg, 'netflix', 'perfil', 'pin netflix')) {
+  if (matches(msg, 'netflix', 'perfil', 'pin netflix')) {
     return getAssistantReply(ctx, 'credenciais')
-  }
-
-  if (matches(msg, 'm3u', 'lista', 'app iptv', 'smart tv iptv')) {
-    if (ctx.servico !== 'iptv') {
-      return {
-        reply: 'O serviço M3U aplica-se a clientes IPTV. O seu serviço é Netflix — use a aba Netflix para ver o perfil e PIN.',
-        suggestions: ['Ver credenciais', 'Abrir Netflix'],
-        actions: [{ type: 'tab', label: 'Ver Netflix', tab: 'servico' }],
-      }
-    }
-    return {
-      reply: ctx.iptvM3u
-        ? 'Copie a lista M3U na aba IPTV e cole na app do seu dispositivo (Smarters, XCIPTV, etc.). Se precisar de ajuda na instalação, fale connosco no WhatsApp.'
-        : 'Ainda não há lista M3U registada na sua conta. Peça à equipa Rove+ pelo WhatsApp.',
-      suggestions: ['Ver credenciais', 'Falar com suporte'],
-      actions: [{ type: 'tab', label: 'Ver M3U', tab: 'servico' }, whatsappSupport()],
-    }
   }
 
   if (matches(msg, 'pin area', 'pin da area', 'alterar pin', 'mudar pin', 'trocar pin', 'primeiro acesso')) {
@@ -377,7 +315,7 @@ export function getAssistantReply(ctx: ClientAssistantContext, rawMessage: strin
     }
   }
 
-  if (ctx.servico === 'netflix' && matches(msg, 'abrir netflix', 'entrar netflix', 'link netflix')) {
+  if (matches(msg, 'abrir netflix', 'entrar netflix', 'link netflix')) {
     return {
       reply: `Abra a Netflix em: ${NETFLIX_LOGIN_URL}\nEscolha o perfil **${ctx.perfil || 'indicado na aba Serviço'}** e use o PIN se pedido.`,
       suggestions: ['Ver credenciais', 'Qual o meu PIN?'],
@@ -389,12 +327,6 @@ export function getAssistantReply(ctx: ClientAssistantContext, rawMessage: strin
   }
 
   if (matches(msg, 'inscri', 'taxa', 'entrada')) {
-    if (ctx.servico !== 'netflix') {
-      return {
-        reply: 'A taxa de inscrição aplica-se a planos Netflix. O seu serviço é IPTV — não há inscrição separada.',
-        suggestions: ['Ver credenciais', 'Quando renovo?'],
-      }
-    }
     const pago = ctx.inscricaoPaga === true ? 'Sim, inscrição paga.' : ctx.inscricaoPaga === false ? 'Inscrição ainda pendente — fale connosco.' : 'Estado da inscrição não registado.'
     return {
       reply: `Inscrição Netflix: ${pago}`,

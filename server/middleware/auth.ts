@@ -9,7 +9,7 @@ export interface AuthPayload {
   role: string
 }
 
-const PANEL_STAFF_ROLES = new Set(['admin', 'geral', 'netflix', 'iptv', 'suporte', 'financeiro'])
+const PANEL_STAFF_ROLES = new Set(['admin', 'geral', 'netflix', 'suporte', 'financeiro'])
 
 export function authMiddleware(req: Request, res: Response, next: NextFunction) {
   const token = req.cookies?.token || req.headers.authorization?.replace('Bearer ', '')
@@ -40,27 +40,9 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   next()
 }
 
-/** Roles: admin, geral, financeiro (vê tudo), netflix, iptv. suporte = geral */
-export function getRoleServicoFilter(role: string): 'netflix' | 'iptv' | null {
-  if (role === 'admin' || role === 'geral' || role === 'suporte' || role === 'financeiro') return null
-  if (role === 'netflix') return 'netflix'
-  if (role === 'iptv') return 'iptv'
-  return null
-}
-
-export function canAccessServico(role: string, servico: string): boolean {
-  if (role === 'financeiro') return true
-  const filter = getRoleServicoFilter(role)
-  if (!filter) return true
-  return filter === servico
-}
-
-export function canAccessServidores(role: string): boolean {
-  return role === 'admin' || role === 'geral' || role === 'iptv' || role === 'suporte' || role === 'financeiro'
-}
-
-export function canManageServidores(role: string): boolean {
-  return role === 'admin' || role === 'geral' || role === 'iptv' || role === 'suporte'
+/** Roles: admin, geral, financeiro, netflix. suporte = geral. O painel só gere o serviço Netflix. */
+export function canAccessServico(_role: string, servico: string): boolean {
+  return servico === 'netflix'
 }
 
 export function canAccessSalas(role: string): boolean {

@@ -24,6 +24,8 @@ import { ROVE_FORM_INPUT_SM, RoveFormLabel } from '../components/roveFormUi'
 import { emptyWhatsapp, formatWhatsapp, isWhatsappValid, nationalDigitsFromWhatsapp } from '../utils/whatsapp'
 import { useAuth } from '../contexts/AuthContext'
 import { useAlert } from '../contexts/AlertContext'
+import { LoadingButton } from '../components/LoadingButton'
+import { useBusy } from '../lib/useBusy'
 import { api } from '../api/client'
 import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
 import {
@@ -63,7 +65,6 @@ interface ClientAccessRow {
 const ROLES_OPERADORES = [
   { value: 'geral', label: 'Geral' },
   { value: 'netflix', label: 'Netflix' },
-  { value: 'iptv', label: 'IPTV' },
   { value: 'financeiro', label: 'Financeiro' },
 ]
 
@@ -86,11 +87,6 @@ const ROLE_STYLES: Record<
     chip: 'bg-red-500/20 text-red-200',
     pill: 'bg-red-500/15 text-red-200 border border-red-400/40',
   },
-  iptv: {
-    label: 'IPTV',
-    chip: 'bg-violet-500/20 text-violet-200',
-    pill: 'bg-violet-500/15 text-violet-200 border border-violet-400/40',
-  },
   suporte: {
     label: 'Suporte',
     chip: 'bg-emerald-500/15 text-emerald-200',
@@ -108,7 +104,6 @@ function formatDate(date: string) {
 }
 
 const SERVICO_LABEL: Record<string, string> = {
-  iptv: 'IPTV',
   netflix: 'Netflix',
 }
 
@@ -152,12 +147,12 @@ function AlertScopesEditor({
     {
       key: 'clientes',
       title: 'Clientes',
-      items: ['clientes_netflix', 'clientes_iptv'],
+      items: ['clientes_netflix'],
     },
     {
       key: 'operacao',
       title: 'Operação',
-      items: ['financeiro', 'salas', 'servidores', 'indicacoes'],
+      items: ['financeiro', 'salas', 'indicacoes'],
     },
     {
       key: 'sistema',
@@ -272,6 +267,7 @@ export default function Utilizadores() {
   const [section, setSection] = useState<'operadores' | 'clientes'>('operadores')
   const [users, setUsers] = useState<UserRow[]>([])
   const [loading, setLoading] = useState(true)
+  const { busy, run } = useBusy()
   const [error, setError] = useState<string | null>(null)
   const [modal, setModal] = useState<'create' | 'edit' | null>(null)
   const [editing, setEditing] = useState<UserRow | null>(null)
@@ -310,7 +306,6 @@ export default function Utilizadores() {
   const [clientsLoading, setClientsLoading] = useState(false)
   const [clientSearch, setClientSearch] = useState('')
   const [clientSearchDebounced, setClientSearchDebounced] = useState('')
-  const [serviceFilter, setServiceFilter] = useState<'todos' | 'iptv' | 'netflix'>('todos')
   const [portalFilter, setPortalFilter] = useState<'todos' | 'com' | 'sem'>('todos')
   const [clientTablePage, setClientTablePage] = useState(1)
   const [clientForPin, setClientForPin] = useState<ClientAccessRow | null>(null)
@@ -368,7 +363,7 @@ export default function Utilizadores() {
 
   useEffect(() => {
     setClientTablePage(1)
-  }, [clientSearchDebounced, serviceFilter, portalFilter])
+  }, [clientSearchDebounced, portalFilter])
 
   useEffect(() => {
     if (section !== 'clientes') return
@@ -417,7 +412,6 @@ export default function Utilizadores() {
   const filteredClients = useMemo(() => {
     const q = clientSearchDebounced.trim().toLowerCase()
     return clients.filter((c) => {
-      if (serviceFilter !== 'todos' && c.servico !== serviceFilter) return false
       if (portalFilter === 'com' && !c.areaClienteAtiva) return false
       if (portalFilter === 'sem' && c.areaClienteAtiva) return false
       if (!q) return true
@@ -426,7 +420,7 @@ export default function Utilizadores() {
         String(c.whatsapp).toLowerCase().includes(q)
       )
     })
-  }, [clients, clientSearchDebounced, serviceFilter, portalFilter])
+  }, [clients, clientSearchDebounced, portalFilter])
 
   const totalClientPages = Math.max(1, Math.ceil(filteredClients.length / ROWS_PER_PAGE))
   const clientPageClamped = Math.min(clientTablePage, totalClientPages)
@@ -1096,19 +1090,6 @@ export default function Utilizadores() {
         ) : (
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-2 p-4 rounded-xl bg-netflix-card/60 border border-netflix-border/80">
-              <div className="w-40 min-w-[10rem]">
-                <RoveSelect
-                  compact
-                  value={serviceFilter}
-                  onChange={(e) => setServiceFilter(e.target.value as 'todos' | 'iptv' | 'netflix')}
-                  placeholder="Todos os serviços"
-                  title="Filtrar por serviço"
-                >
-                  <option value="todos">Todos os serviços</option>
-                  <option value="iptv">Clientes IPTV</option>
-                  <option value="netflix">Clientes Netflix</option>
-                </RoveSelect>
-              </div>
               <div className="w-44 min-w-[11rem]">
                 <RoveSelect
                   compact
@@ -1272,14 +1253,14 @@ export default function Utilizadores() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={confirmarSuspender}
+              <LoadingButton
+                onClick={() => run('suspender', confirmarSuspender)}
+                loading={busy === 'suspender'}
                 disabled={submitLoading}
                 className="flex-1 py-2.5 px-4 bg-amber-600 text-white rounded-xl text-sm font-medium hover:bg-amber-700 disabled:opacity-50 transition-colors shadow-lg shadow-amber-900/30"
               >
                 {submitLoading ? 'A suspender…' : 'Suspender'}
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
@@ -1314,14 +1295,14 @@ export default function Utilizadores() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={confirmarAtivar}
+              <LoadingButton
+                onClick={() => run('ativar', confirmarAtivar)}
+                loading={busy === 'ativar'}
                 disabled={submitLoading}
                 className="flex-1 py-2.5 px-4 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors shadow-lg shadow-green-900/30"
               >
                 {submitLoading ? 'A ativar…' : 'Ativar'}
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
@@ -1356,14 +1337,14 @@ export default function Utilizadores() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={confirmarExcluir}
+              <LoadingButton
+                onClick={() => run('excluir', confirmarExcluir)}
+                loading={busy === 'excluir'}
                 disabled={submitLoading}
                 className="flex-1 py-2.5 px-4 bg-red-600 text-white rounded-xl text-sm font-medium hover:bg-red-700 disabled:opacity-50 transition-colors shadow-lg shadow-red-900/30"
               >
                 {submitLoading ? 'A eliminar…' : 'Eliminar'}
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
@@ -1415,14 +1396,14 @@ export default function Utilizadores() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={confirmarRedefinirSenha}
+              <LoadingButton
+                onClick={() => run('senha', confirmarRedefinirSenha)}
+                loading={busy === 'senha'}
                 disabled={submitLoading}
                 className="flex-1 py-2.5 px-4 bg-primary-600 text-white rounded-xl text-sm font-medium hover:bg-primary-700 disabled:opacity-50 transition-colors shadow-lg shadow-primary-900/30"
               >
                 {submitLoading ? 'A guardar…' : 'Redefinir'}
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
@@ -1481,14 +1462,14 @@ export default function Utilizadores() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={confirmarPinCliente}
+              <LoadingButton
+                onClick={() => run('pin', confirmarPinCliente)}
+                loading={busy === 'pin'}
                 disabled={submitLoading}
                 className="flex-1 py-2.5 px-4 bg-primary-600 text-white rounded-xl text-sm font-medium hover:bg-primary-700 disabled:opacity-50 transition-colors shadow-lg shadow-primary-900/30"
               >
                 {submitLoading ? 'A guardar…' : 'Guardar PIN'}
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
@@ -1522,14 +1503,14 @@ export default function Utilizadores() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={confirmarRevogarPortal}
+              <LoadingButton
+                onClick={() => run('revogar', confirmarRevogarPortal)}
+                loading={busy === 'revogar'}
                 disabled={submitLoading}
                 className="flex-1 py-2.5 px-4 bg-amber-600 text-white rounded-xl text-sm font-medium hover:bg-amber-700 disabled:opacity-50 transition-colors shadow-lg shadow-amber-900/30"
               >
                 {submitLoading ? 'A revogar…' : 'Revogar'}
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
@@ -1564,14 +1545,14 @@ export default function Utilizadores() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={confirmarAlertas}
+              <LoadingButton
+                onClick={() => run('alertas', confirmarAlertas)}
+                loading={busy === 'alertas'}
                 disabled={submitLoading}
                 className="flex-1 py-1.5 px-3 bg-violet-600 text-white rounded-lg text-xs font-medium hover:bg-violet-700 disabled:opacity-50 transition-colors"
               >
                 {submitLoading ? 'A guardar…' : 'Guardar alertas'}
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
@@ -1709,13 +1690,13 @@ export default function Utilizadores() {
                 >
                   Cancelar
                 </button>
-                <button
+                <LoadingButton
                   type="submit"
-                  disabled={submitLoading}
+                  loading={submitLoading}
                   className="flex-1 py-1.5 px-3 bg-primary-600 text-white rounded-lg text-xs font-medium hover:bg-primary-700 disabled:opacity-50 transition-colors shadow-lg shadow-primary-900/30"
                 >
                   {submitLoading ? 'A guardar…' : modal === 'create' ? 'Criar utilizador' : 'Guardar'}
-                </button>
+                </LoadingButton>
               </div>
             </form>
           </div>

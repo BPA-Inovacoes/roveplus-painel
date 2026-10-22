@@ -6,6 +6,7 @@ import {
   LEMBRETE_DIAS,
   formatDateBr,
 } from '../lib/whatsappNotify.js'
+import { ensurePagamentosTables } from '../lib/pagamentos.js'
 
 const router = Router()
 
@@ -37,7 +38,7 @@ router.get('/alertas', async (req, res) => {
   const in7Days = new Date(today)
   in7Days.setDate(in7Days.getDate() + 7)
 
-  // Alertas para admin (salas e servidores) – calculados sempre que houver necessidade.
+  // Alertas para admin (salas) – calculados sempre que houver necessidade.
   const salasVencendo = await prisma.sala.findMany({
     where: { status: 'ativo', dataFim: { gte: today, lte: in7Days } },
     select: { id: true, nome: true, dataFim: true },
@@ -48,31 +49,66 @@ router.get('/alertas', async (req, res) => {
     select: { id: true, nome: true, dataFim: true },
     orderBy: { dataFim: 'asc' },
   })
-  const servidoresProblema = await prisma.servidor.findMany({
-    where: { status: { in: ['instável', 'offline'] } },
-    select: { id: true, nome: true, status: true, _count: { select: { clients: true } } },
-    orderBy: { nome: 'asc' },
-  })
 
-  await prisma.$executeRawUnsafe(`
-    ALTER TABLE servidores ADD COLUMN IF NOT EXISTS data_pagamento TIMESTAMP
-  `).catch(() => {})
-  const servidoresPagamento = await prisma.$queryRawUnsafe<
-    Array<{ id: number; nome: string; data_pagamento: Date | null }>
-  >(
-    `SELECT id, nome, data_pagamento FROM servidores
-     WHERE tipo = 'principal' AND data_pagamento IS NOT NULL
-       AND data_pagamento >= $1 AND data_pagamento <= $2
-     ORDER BY data_pagamento ASC`,
-    today,
-    in7Days
-  ).catch(() => [])
+  /**
+   * Fim de cada mês pago: quando termina um mês e o cliente ainda tem meses pagos à frente,
+   * avisa "terminou 1 mês, restam N". Se não restam meses, o aviso de prazo terminado é o do
+   * bloco de vencimento abaixo (evita duas mensagens).
+   */
+  let mesesTerminadosAvisados = 0
+  if (!testAdmin) {
+    await ensurePagamentosTables().catch(() => {})
+    const limiteAtraso = new Date(today)
+    limiteAtraso.setDate(limiteAtraso.getDate() - 3)
+    const terminados = await prisma.periodoPago
+      .findMany({
+        where: { fim: { lte: today }, notificadoAt: null },
+        select: { id: true, clientId: true, fim: true },
+        orderBy: { fim: 'asc' },
+      })
+      .catch(() => [] as Array<{ id: number; clientId: number; fim: Date }>)
+    const porCliente = new Map<number, Array<{ id: number; fim: Date }>>()
+    for (const p of terminados) {
+      const list = porCliente.get(p.clientId) ?? []
+      list.push(p)
+      porCliente.set(p.clientId, list)
+    }
+    for (const [clientId, periodos] of porCliente) {
+      const ultimo = periodos[periodos.length - 1]
+      const [client, restantes] = await Promise.all([
+        prisma.client.findUnique({ where: { id: clientId }, select: { nome: true, whatsapp: true, status: true, servico: true, dataFim: true } }),
+        prisma.periodoPago.findMany({ where: { clientId, fim: { gt: today } }, select: { fim: true }, orderBy: { fim: 'asc' } }),
+      ])
+      let ok = true
+      // Períodos antigos (cron parado > 3 dias) são marcados sem enviar, para não mandar avisos desatualizados.
+      if (client && client.servico === 'netflix' && client.status === 'ativo' && restantes.length > 0 && ultimo.fim >= limiteAtraso) {
+        // Períodos de calendário terminam no dia 1 do mês seguinte → o mês terminado é o anterior.
+        const fim = new Date(ultimo.fim)
+        const mesTerminado =
+          fim.getDate() === 1
+            ? new Date(fim.getFullYear(), fim.getMonth() - 1, 1).toLocaleDateString('pt-PT', { month: 'long', year: 'numeric' })
+            : formatDateBr(fim)
+        ok = await sendWhatsAppMessage(
+          client.whatsapp,
+          templates.mesPagoTerminou(client.nome, mesTerminado, restantes.length, formatDateBr(client.dataFim))
+        )
+        if (ok) mesesTerminadosAvisados++
+      }
+      if (ok) {
+        await prisma.periodoPago.updateMany({
+          where: { id: { in: periodos.map((p) => p.id) } },
+          data: { notificadoAt: new Date() },
+        })
+      }
+    }
+  }
 
   /** Vencimento automático: WhatsApp + marcar vencido; ou só WhatsApp se o painel já marcou vencido. */
   let vencidosAutoSent = 0
   if (!testAdmin) {
     const aindaAtivos = await prisma.client.findMany({
       where: {
+        servico: 'netflix',
         status: 'ativo',
         dataFim: { lt: today },
         whatsappNotificadoVencimentoAt: null,
@@ -94,6 +130,7 @@ router.get('/alertas', async (req, res) => {
 
     const jaVencidosSemAviso = await prisma.client.findMany({
       where: {
+        servico: 'netflix',
         status: 'vencido',
         dataFim: { lt: today },
         whatsappNotificadoVencimentoAt: null,
@@ -115,6 +152,7 @@ router.get('/alertas', async (req, res) => {
 
   const clients = await prisma.client.findMany({
     where: {
+      servico: 'netflix',
       status: 'ativo',
       dataFim: { gte: today, lte: in7Days },
     },
@@ -141,18 +179,20 @@ router.get('/alertas', async (req, res) => {
     testAdmin ||
     clients.length > 0 ||
     vencidosAutoSent > 0 ||
+    mesesTerminadosAvisados > 0 ||
     salasVencendo.length > 0 ||
     salasVencidas.length > 0 ||
-    servidoresProblema.length > 0 ||
-    servidoresPagamento.length > 0 ||
     inscricoesPendentes > 0 ||
     indicacoesPendentes > 0
   if (shouldNotifyAdmin) {
     const adminMsg = testAdmin
-      ? 'Teste de alertas do painel (clientes/salas/servidores). Se recebeu esta mensagem, está a funcionar.'
+      ? 'Teste de alertas do painel (clientes/salas). Se recebeu esta mensagem, está a funcionar.'
       : [
           vencidosAutoSent > 0 ? `Clientes notificados (vencimento automático): ${vencidosAutoSent}` : null,
           sent > 0 ? `Lembretes de renovação enviados hoje: ${sent}` : null,
+          mesesTerminadosAvisados > 0
+            ? `Clientes avisados do fim de um mês pago (ainda com meses à frente): ${mesesTerminadosAvisados}`
+            : null,
           clients.length > 0 ? `Clientes a vencer (7 dias): ${clients.length}` : null,
           inscricoesPendentes > 0 ? `Inscrições Netflix pendentes: ${inscricoesPendentes}` : null,
           indicacoesPendentes > 0 ? `Indicações pendentes: ${indicacoesPendentes}` : null,
@@ -168,18 +208,6 @@ router.get('/alertas', async (req, res) => {
                 .map((s) => `${s.nome} (${formatDateBr(s.dataFim!)})`)
                 .join(', ')}${salasVencidas.length > 5 ? '...' : ''})`
             : null,
-          servidoresPagamento.length > 0
-            ? `Servidores com pagamento nos próximos 7 dias: ${servidoresPagamento.length} (${servidoresPagamento
-                .slice(0, 5)
-                .map((s) => `${s.nome} (${formatDateBr(s.data_pagamento!)})`)
-                .join(', ')}${servidoresPagamento.length > 5 ? '...' : ''})`
-            : null,
-          servidoresProblema.length > 0
-            ? `Servidores instável/offline: ${servidoresProblema.length} (${servidoresProblema
-                .slice(0, 5)
-                .map((s) => `${s.nome} (${s.status}, ${s._count.clients} cliente(s))`)
-                .join(', ')}${servidoresProblema.length > 5 ? '...' : ''})`
-            : null,
         ]
           .filter(Boolean)
           .join('\n')
@@ -192,10 +220,10 @@ router.get('/alertas', async (req, res) => {
     total: testAdmin ? 0 : clients.length,
     sent,
     vencidosAutoNotificados: testAdmin ? undefined : vencidosAutoSent,
+    mesesTerminadosAvisados: testAdmin ? undefined : mesesTerminadosAvisados,
     testAdmin: testAdmin || undefined,
     salasVencendo: salasVencendo.length,
     salasVencidas: salasVencidas.length,
-    servidoresProblema: servidoresProblema.length,
   })
 })
 

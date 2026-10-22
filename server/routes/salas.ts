@@ -5,6 +5,8 @@ import type { AuthPayload } from '../middleware/auth.js'
 import { auditLog } from '../middleware/audit.js'
 import { templates } from '../services/whatsapp.js'
 import { notifyPanelUsers, notifySalaClients, formatDateBr } from '../lib/whatsappNotify.js'
+import { addMonthsKeepingBillingDay, ensurePagamentosTables } from '../lib/pagamentos.js'
+import { MAX_CLIENTES_POR_SALA, lugaresOcupados, salaCustoMensal } from '../lib/salasConfig.js'
 
 const router = Router()
 
@@ -13,21 +15,6 @@ async function ensureSalaStatusColumn(): Promise<void> {
   await prisma.$executeRawUnsafe(`
     ALTER TABLE salas ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ativo'
   `)
-}
-
-/**
- * Soma meses preservando o dia de referência da própria sala.
- * Ex.: 03/01 -> 03/02 -> 03/03 (independente da data atual).
- */
-function addMonthsKeepingBillingDay(base: Date, months: number): Date {
-  const d = new Date(base)
-  d.setHours(0, 0, 0, 0)
-  const billingDay = d.getDate()
-  d.setDate(1)
-  d.setMonth(d.getMonth() + months)
-  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()
-  d.setDate(Math.min(billingDay, lastDay))
-  return d
 }
 
 router.use(authMiddleware)
@@ -49,10 +36,23 @@ router.get('/', async (req, res) => {
   } catch {
     // coluna status pode não existir ainda
   }
+  // Lugares ocupados (clientes não cancelados) para mostrar "x/5" e bloquear salas cheias.
+  const ocupadosRows = await prisma.client.groupBy({
+    by: ['salaId'],
+    where: { salaId: { not: null }, status: { not: 'cancelado' } },
+    _count: { _all: true },
+  })
+  const ocupadosMap = new Map(ocupadosRows.map((r) => [r.salaId as number, r._count._all]))
   res.json(
     list.map((s) => {
       const { _count, ...rest } = s
-      return { ...rest, status: statusMap[s.id] ?? 'ativo', totalClientes: _count.clients }
+      return {
+        ...rest,
+        status: statusMap[s.id] ?? 'ativo',
+        totalClientes: _count.clients,
+        lugaresOcupados: ocupadosMap.get(s.id) ?? 0,
+        maxClientes: MAX_CLIENTES_POR_SALA,
+      }
     })
   )
 })
@@ -154,20 +154,36 @@ router.post('/:id/pagar-mes', auditLog('pay_sala_month', 'sala'), async (req, re
   const existing = await prisma.sala.findUnique({ where: { id } })
   if (!existing) return res.status(404).json({ error: 'Sala não encontrada' })
 
-  // Regra do negócio: pagamento de sala soma sempre 1 mês à data fim da própria sala,
-  // mantendo o mesmo dia de cobrança em todos os meses.
+  // Regra do negócio: pagamento de sala soma N meses (por omissão 1) à data fim da própria sala,
+  // mantendo o mesmo dia de cobrança. A data fim dos clientes NÃO muda: cada cliente tem os seus meses pagos.
+  const meses = Math.min(24, Math.max(1, Math.round(Number(req.body?.meses) || 1)))
+  const valorMensal = salaCustoMensal()
+  const valor =
+    req.body?.valor != null && req.body.valor !== '' && !Number.isNaN(Number(req.body.valor))
+      ? Number(req.body.valor)
+      : valorMensal * meses
+  const dataPagamento = req.body?.dataPagamento ? new Date(req.body.dataPagamento) : new Date()
   const baseDate = existing.dataFim ?? new Date()
-  const nextMonth = addMonthsKeepingBillingDay(baseDate, 1)
+  const nextMonth = addMonthsKeepingBillingDay(baseDate, meses)
 
-  const sala = await prisma.sala.update({
-    where: { id },
-    data: { dataFim: nextMonth },
-  })
-
-  await prisma.client.updateMany({
-    where: { salaId: id },
-    data: { dataFim: nextMonth },
-  })
+  await ensurePagamentosTables()
+  const [sala] = await prisma.$transaction([
+    prisma.sala.update({
+      where: { id },
+      data: { dataFim: nextMonth },
+    }),
+    prisma.pagamentoSala.create({
+      data: {
+        salaId: id,
+        dataPagamento: Number.isNaN(dataPagamento.getTime()) ? new Date() : dataPagamento,
+        meses,
+        valor,
+        periodoInicio: addMonthsKeepingBillingDay(baseDate, 0),
+        periodoFim: nextMonth,
+        userId: user.userId,
+      },
+    }),
+  ])
 
   const countResult = await prisma.$queryRawUnsafe<Array<{ count: number }>>(
     'SELECT COUNT(*)::int as count FROM clients WHERE sala_id = $1',
@@ -187,24 +203,60 @@ router.post('/:id/pagar-mes', auditLog('pay_sala_month', 'sala'), async (req, re
   }
 
   const fimStr = formatDateBr(nextMonth)
-  void notifySalaClients(id, (nome) => templates.salaContaRenovada(nome, sala.nome, fimStr))
+  // Os clientes recebem a sua própria data (meses que pagaram), não a data da sala.
+  void notifySalaClients(id, (nome, fimCliente) => templates.salaContaRenovada(nome, sala.nome, fimCliente))
   void notifyPanelUsers(
     'salas',
-    `Conta Netflix renovada: sala "${sala.nome}" — ${totalClientes} cliente(s) — próxima renovação ${fimStr}.`
+    `Conta Netflix renovada: sala "${sala.nome}" — ${meses} mês(es) — ${totalClientes} cliente(s) — próxima renovação ${fimStr}.`
   )
 
   res.json({ ...sala, status: statusVal, totalClientes })
 })
 
+router.get('/:id/pagamentos', async (req, res) => {
+  const user = (req as unknown as { user: AuthPayload }).user
+  if (!canAccessSalas(user.role)) return res.status(403).json({ error: 'Sem acesso a salas' })
+  await ensurePagamentosTables()
+  const rows = await prisma.pagamentoSala.findMany({
+    where: { salaId: Number(req.params.id) },
+    orderBy: [{ dataPagamento: 'desc' }, { id: 'desc' }],
+  })
+  res.json(rows.map((r) => ({ ...r, valor: Number(r.valor) })))
+})
+
 router.get('/:id', async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
   if (!canAccessSalas(user.role)) return res.status(403).json({ error: 'Sem acesso a salas' })
+  await ensurePagamentosTables()
+  // Detalhes da sala: dados da conta, clientes (só campos necessários, sem PINs da área cliente) e pagamentos da conta.
   const s = await prisma.sala.findUnique({
     where: { id: Number(req.params.id) },
-    include: { clients: true },
+    include: {
+      clients: {
+        where: { servico: 'netflix' },
+        select: {
+          id: true,
+          roveId: true,
+          nome: true,
+          whatsapp: true,
+          plano: true,
+          perfil: true,
+          pin: true,
+          dataFim: true,
+          valor: true,
+          status: true,
+        },
+        orderBy: { nome: 'asc' },
+      },
+      pagamentos: { orderBy: [{ dataPagamento: 'desc' }, { id: 'desc' }] },
+    },
   })
   if (!s) return res.status(404).json({ error: 'Sala não encontrada' })
-  res.json(s)
+  res.json({
+    ...s,
+    clients: s.clients.map((c) => ({ ...c, valor: Number(c.valor) })),
+    pagamentos: s.pagamentos.map((p) => ({ ...p, valor: Number(p.valor) })),
+  })
 })
 
 router.patch('/:id', auditLog('update_sala', 'sala'), async (req, res) => {
@@ -221,10 +273,7 @@ router.patch('/:id', auditLog('update_sala', 'sala'), async (req, res) => {
   if (observacoes !== undefined) update.observacoes = observacoes != null && String(observacoes).trim() !== '' ? String(observacoes).trim() : null
   if (dataFim !== undefined) update.dataFim = dataFim ? new Date(dataFim) : null
   if (Object.keys(update).length > 0) {
-    const sala = await prisma.sala.update({ where: { id }, data: update })
-    if (sala.dataFim != null) {
-      await prisma.client.updateMany({ where: { salaId: id }, data: { dataFim: sala.dataFim } })
-    }
+    await prisma.sala.update({ where: { id }, data: update })
   }
   if (status != null) {
     await ensureSalaStatusColumn()
@@ -248,8 +297,35 @@ router.delete('/:id', auditLog('delete_sala', 'sala'), async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
   if (!canManageSalas(user.role)) return res.status(403).json({ error: 'Sem permissão para eliminar salas' })
   const id = Number(req.params.id)
-  await prisma.client.updateMany({ where: { salaId: id }, data: { salaId: null } })
-  await prisma.sala.delete({ where: { id } })
+  const existing = await prisma.sala.findUnique({ where: { id } })
+  if (!existing) return res.status(404).json({ error: 'Sala não encontrada' })
+  // ?transferirPara=<id>: os clientes passam para essa sala; sem parâmetro ficam sem sala.
+  const destinoId = req.query.transferirPara ? Number(req.query.transferirPara) : null
+  let destino: { id: number; nome: string } | null = null
+  if (destinoId != null) {
+    if (!Number.isInteger(destinoId) || destinoId === id) {
+      return res.status(400).json({ error: 'Sala de destino inválida' })
+    }
+    destino = await prisma.sala.findUnique({ where: { id: destinoId }, select: { id: true, nome: true } })
+    if (!destino) return res.status(400).json({ error: 'Sala de destino não encontrada' })
+    const aTransferir = await lugaresOcupados(id)
+    const ocupados = await lugaresOcupados(destino.id)
+    if (ocupados + aTransferir > MAX_CLIENTES_POR_SALA) {
+      return res.status(400).json({
+        error: `A sala "${destino.nome}" tem ${ocupados} cliente(s); não cabem mais ${aTransferir} (máximo ${MAX_CLIENTES_POR_SALA} por sala).`,
+      })
+    }
+  }
+  const [moved] = await prisma.$transaction([
+    prisma.client.updateMany({ where: { salaId: id }, data: { salaId: destino?.id ?? null } }),
+    prisma.sala.delete({ where: { id } }),
+  ])
+  void notifyPanelUsers(
+    'salas',
+    destino
+      ? `Sala Netflix eliminada: "${existing.nome}" — ${moved.count} cliente(s) transferido(s) para "${destino.nome}".`
+      : `Sala Netflix eliminada: "${existing.nome}" — ${moved.count} cliente(s) ficaram sem sala.`
+  )
   res.status(204).send()
 })
 

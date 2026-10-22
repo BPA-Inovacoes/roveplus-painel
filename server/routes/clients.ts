@@ -1,7 +1,7 @@
-import { Router } from 'express'
+import { Router, type Request, type Response } from 'express'
 import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
-import { authMiddleware, getRoleServicoFilter, canAccessServico, canManageClients } from '../middleware/auth.js'
+import { authMiddleware, canAccessServico, canManageClients, canAccessFinanceiro } from '../middleware/auth.js'
 import type { AuthPayload } from '../middleware/auth.js'
 import { auditLog } from '../middleware/audit.js'
 import { sendWhatsAppMessage, templates, normalizeClientWhatsappKey } from '../services/whatsapp.js'
@@ -18,6 +18,18 @@ import {
   setPortalPinPlainInDb,
 } from '../lib/portalPinPlain.js'
 import { ensureClientRoveId, getRoveIdsMap } from '../lib/roveId.js'
+import { MAX_CLIENTES_POR_SALA, lugaresOcupados } from '../lib/salasConfig.js'
+import {
+  addMonthsKeepingBillingDay,
+  calcularCobertura,
+  limiteRenovacaoDoMes,
+  startOfToday,
+  listarPagamentosCliente,
+  mesesEntre,
+  registarPagamentoCliente,
+  removerPagamentoCliente,
+  serializePagamento,
+} from '../lib/pagamentos.js'
 
 const router = Router()
 
@@ -64,33 +76,28 @@ async function ensureUniqueClientPerfil(perfil: string, excludeId?: number): Pro
   }
 }
 
-/** Adiciona N meses à data fim atual (mantém o dia; renovar = +1 mês, +2 meses, etc.). */
-function adicionarMesesADataFim(base: Date, meses: number): Date {
-  const d = new Date(base)
-  d.setHours(0, 0, 0, 0)
-  d.setMonth(d.getMonth() + meses)
-  return d
+function optionalDate(v: unknown): Date | null {
+  if (v == null || v === '') return null
+  const d = new Date(String(v))
+  return Number.isNaN(d.getTime()) ? null : d
 }
 
 router.get('/', async (req, res) => {
-  const { servico, servidorId, status, vencendo, revendedorId, salaId, q, inscricaoPaga } = req.query
+  const { status, vencendo, salaId, q, inscricaoPaga } = req.query
   const user = (req as unknown as { user: AuthPayload }).user
   const includePortalPin = user.role === 'admin' && String(req.query.includePortalPin) === '1'
-  const roleFilter = getRoleServicoFilter(user.role)
   await ensurePortalPinPlainColumn().catch(() => {})
 
   // Atualizar automaticamente para vencido: clientes ativos cuja dataFim já passou
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   await prisma.client.updateMany({
-    where: { status: 'ativo', dataFim: { lt: today } },
+    where: { servico: 'netflix', status: 'ativo', dataFim: { lt: today } },
     data: { status: 'vencido' },
   })
 
-  const where: AnyRecord = {}
-  if (roleFilter) where.servico = roleFilter
-  else if (servico) where.servico = String(servico)
-  if (servidorId) where.servidorId = Number(servidorId)
+  // O painel só gere clientes Netflix (registos IPTV antigos ficam na base mas não aparecem).
+  const where: AnyRecord = { servico: 'netflix' }
   if (salaId) where.salaId = Number(salaId)
   if (status) where.status = String(status)
   if (vencendo === 'hoje') {
@@ -117,7 +124,12 @@ router.get('/', async (req, res) => {
     where.dataFim = { gte: today, lte: in7 }
     where.status = 'ativo'
   }
-  if (revendedorId) where.revendedorId = Number(revendedorId)
+  // Por pagar este mês: ativos/vencidos cujo mês atual ainda não está pago (data fim antes do dia 10 do mês seguinte).
+  if (req.query.porPagarMes === '1') {
+    const now = new Date()
+    where.status = { in: ['ativo', 'vencido'] }
+    where.dataFim = { lt: limiteRenovacaoDoMes(new Date(now.getFullYear(), now.getMonth() + 1, 1)) }
+  }
   if (inscricaoPaga === 'true' || inscricaoPaga === '1') where.inscricaoPaga = true
   else if (inscricaoPaga === 'false' || inscricaoPaga === '0') where.inscricaoPaga = false
   else if (inscricaoPaga === 'pendente') {
@@ -134,8 +146,6 @@ router.get('/', async (req, res) => {
       { plano: { contains: qTerm, mode: 'insensitive' } },
       { perfil: { contains: qTerm, mode: 'insensitive' } },
       { roveId: { contains: qTerm, mode: 'insensitive' } },
-      { servidor: { nome: { contains: qTerm, mode: 'insensitive' } } },
-      { revendedor: { nome: { contains: qTerm, mode: 'insensitive' } } },
       { sala: { nome: { contains: qTerm, mode: 'insensitive' } } },
     ]
     if (digits && digits !== qTerm) {
@@ -146,7 +156,7 @@ router.get('/', async (req, res) => {
 
   const clients = await prisma.client.findMany({
     where,
-    include: { servidor: true, revendedor: true, sala: true },
+    include: { sala: true },
     orderBy: { dataFim: 'asc' },
   })
   const [pinPlainById, roveById] = await Promise.all([
@@ -175,7 +185,7 @@ router.get('/:id', async (req, res) => {
   const user = (req as unknown as { user: AuthPayload }).user
   const client = await prisma.client.findUnique({
     where: { id: Number(req.params.id) },
-    include: { servidor: true, revendedor: true, sala: true },
+    include: { sala: true },
   })
   if (!client) return res.status(404).json({ error: 'Cliente não encontrado' })
   if (!canAccessServico(user.role, client.servico)) return res.status(403).json({ error: 'Sem acesso a este cliente' })
@@ -224,13 +234,24 @@ router.post('/', auditLog('create_client', 'client'), async (req, res) => {
       throw err
     }
   }
-  const servico = body.servico || 'iptv'
+  const servico = 'netflix'
   if (!canAccessServico(user.role, servico)) return res.status(403).json({ error: 'Sem permissão para criar cliente deste serviço' })
-  let dataFim = body.dataFim ? new Date(body.dataFim) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+  // A data fim do cliente é dele (meses que pagou), independente da data fim da sala.
+  const dataInicio = optionalDate(body.dataInicio) ?? new Date()
+  dataInicio.setHours(0, 0, 0, 0)
+  const mesesPagos = Number(body.mesesPagos) > 0 ? Math.min(24, Math.round(Number(body.mesesPagos))) : null
+  // Meses pagos = meses de calendário a partir do mês atual; renovação até ao dia 10 do mês seguinte.
+  let dataFim = mesesPagos
+    ? calcularCobertura(dataInicio, mesesPagos).dataFim
+    : optionalDate(body.dataFim) ?? addMonthsKeepingBillingDay(dataInicio, 1)
   const salaId = body.salaId != null && body.salaId !== '' ? Number(body.salaId) : null
-  if (servico === 'netflix' && salaId) {
-    const sala = await prisma.sala.findUnique({ where: { id: salaId } })
-    if (sala?.dataFim) dataFim = sala.dataFim
+  if (salaId != null) {
+    if (!(await prisma.sala.findUnique({ where: { id: salaId }, select: { id: true } }))) {
+      return res.status(400).json({ error: 'Sala não encontrada' })
+    }
+    if ((await lugaresOcupados(salaId)) >= MAX_CLIENTES_POR_SALA) {
+      return res.status(400).json({ error: `Esta sala já tem ${MAX_CLIENTES_POR_SALA} clientes (máximo). Escolha outra sala.` })
+    }
   }
   let portalPinHash: string | undefined
   if (body.portalPin != null && String(body.portalPin).trim() !== '') {
@@ -248,16 +269,10 @@ router.post('/', auditLog('create_client', 'client'), async (req, res) => {
       localizacao: body.localizacao || null,
       servico,
       plano: body.plano || 'mensal',
-      servidorId: body.servidorId ? Number(body.servidorId) : null,
-      revendedorId: body.revendedorId ? Number(body.revendedorId) : null,
       perfil: perfil || null,
       pin: pin || null,
-      iptvUser: body.iptvUser || null,
-      iptvPass: body.iptvPass || null,
-      iptvMac: body.iptvMac || null,
-      iptvM3u: body.iptvM3u || null,
       dataSubscricao: body.dataSubscricao ? new Date(body.dataSubscricao) : new Date(),
-      dataInicio: body.dataInicio ? new Date(body.dataInicio) : new Date(),
+      dataInicio,
       dataFim,
       valor: Number(body.valor) || 0,
       inscricaoPaga: body.inscricaoPaga === true || body.inscricaoPaga === 'true' ? true : body.inscricaoPaga === false || body.inscricaoPaga === 'false' ? false : null,
@@ -266,6 +281,25 @@ router.post('/', auditLog('create_client', 'client'), async (req, res) => {
       ...(portalPinHash ? { portalPinHash } : {}),
     },
   })
+  // Primeiro pagamento: fica no histórico desde o registo do cliente.
+  try {
+    const meses = mesesPagos ?? Math.min(24, mesesEntre(dataInicio, dataFim))
+    const r = await registarPagamentoCliente({
+      clientId: client.id,
+      meses,
+      mesInicial: mesesPagos ? dataInicio : null,
+      inicio: mesesPagos ? null : addMonthsKeepingBillingDay(dataFim, -meses),
+      fim: mesesPagos ? null : dataFim,
+      valorTotal: body.valorPago != null && body.valorPago !== '' ? Number(body.valorPago) : null,
+      dataPagamento: optionalDate(body.dataPagamento) ?? new Date(),
+      metodo: body.metodoPagamento || null,
+      userId: user.userId,
+      origem: mesesPagos ? 'painel' : 'inicial',
+    })
+    dataFim = r.dataFim
+  } catch (e) {
+    console.error('[clients] Erro ao registar pagamento inicial:', e)
+  }
   if (portalPinHash && portalPlain) {
     await setPortalPinPlainInDb(client.id, portalPlain)
   }
@@ -279,12 +313,11 @@ router.post('/', auditLog('create_client', 'client'), async (req, res) => {
   }
   const msg = templates.clienteCadastrado(client.nome, dataFim.toLocaleDateString('pt-BR'))
   void sendWhatsAppMessage(client.whatsapp, msg).catch(() => {})
-  const servicoLabel = servico === 'netflix' ? 'Netflix' : 'IPTV'
   void notifyPanelUsers(
-    servico === 'netflix' ? 'clientes_netflix' : 'clientes_iptv',
-    `Novo cliente: ${client.nome} (${servicoLabel})\nWhatsApp: ${client.whatsapp}\nRenovação: ${formatDateBr(dataFim)}`
+    'clientes_netflix',
+    `Novo cliente: ${client.nome} (Netflix)\nWhatsApp: ${client.whatsapp}\nRenovação: ${formatDateBr(dataFim)}`
   )
-  if (servico === 'netflix' && client.inscricaoPaga === false) {
+  if (client.inscricaoPaga === false) {
     void notifyPanelUsers(
       'financeiro',
       `Inscrição Netflix pendente: ${client.nome} — plano ${client.plano}.`
@@ -346,34 +379,34 @@ router.patch('/:id', auditLog('update_client', 'client'), async (req, res) => {
   } else if (!canManageClients(user.role)) {
     return res.status(403).json({ error: 'Sem permissão para alterar clientes' })
   }
-  if (body.servico != null && !canAccessServico(user.role, body.servico)) return res.status(403).json({ error: 'Sem permissão para este serviço' })
   const data: AnyRecord = {}
   if (body.nome != null) data.nome = body.nome
   if (body.whatsapp != null) data.whatsapp = body.whatsapp
   if (body.localizacao !== undefined) data.localizacao = body.localizacao || null
-  if (body.servico != null) data.servico = body.servico
   if (body.plano != null) data.plano = body.plano
-  if (body.servidorId != null) data.servidorId = body.servidorId ? Number(body.servidorId) : null
-  if (body.revendedorId !== undefined) data.revendedorId = body.revendedorId ? Number(body.revendedorId) : null
   if (body.perfil != null) data.perfil = body.perfil
   if (body.pin !== undefined) data.pin = body.pin || null
-  if (body.iptvUser != null) data.iptvUser = body.iptvUser
-  if (body.iptvPass != null) data.iptvPass = body.iptvPass
-  if (body.iptvMac != null) data.iptvMac = body.iptvMac
-  if (body.iptvM3u != null) data.iptvM3u = body.iptvM3u
   if (body.dataSubscricao != null) data.dataSubscricao = new Date(body.dataSubscricao)
   if (body.dataInicio != null) data.dataInicio = new Date(body.dataInicio)
-  if (body.dataFim != null) {
-    const newDataFim = new Date(body.dataFim)
-    data.dataFim = newDataFim
-    if (existing.salaId && existing.servico === 'netflix') {
-      await prisma.sala.update({ where: { id: existing.salaId }, data: { dataFim: newDataFim } })
-      await prisma.client.updateMany({ where: { salaId: existing.salaId }, data: { dataFim: newDataFim } })
-    }
-  }
+  // Correção manual só deste cliente (não mexe na sala nem nos outros clientes da sala).
+  if (body.dataFim != null) data.dataFim = new Date(body.dataFim)
   if (body.valor != null) data.valor = Number(body.valor)
   if (body.inscricaoPaga !== undefined) data.inscricaoPaga = body.inscricaoPaga === true || body.inscricaoPaga === 'true'
-  if (body.salaId !== undefined) data.salaId = body.salaId != null && body.salaId !== '' ? Number(body.salaId) : null
+  if (body.salaId !== undefined) {
+    const novaSalaId = body.salaId != null && body.salaId !== '' ? Number(body.salaId) : null
+    if (novaSalaId != null && !(await prisma.sala.findUnique({ where: { id: novaSalaId }, select: { id: true } }))) {
+      return res.status(400).json({ error: 'Sala não encontrada' })
+    }
+    // Só verifica o limite quando o cliente muda para outra sala.
+    if (
+      novaSalaId != null &&
+      novaSalaId !== existing.salaId &&
+      (await lugaresOcupados(novaSalaId, id)) >= MAX_CLIENTES_POR_SALA
+    ) {
+      return res.status(400).json({ error: `Esta sala já tem ${MAX_CLIENTES_POR_SALA} clientes (máximo). Escolha outra sala.` })
+    }
+    data.salaId = novaSalaId
+  }
   if (body.status != null) data.status = body.status
   if (body.portalPin !== undefined) {
     if (body.portalPin === null || String(body.portalPin).trim() === '') {
@@ -416,7 +449,7 @@ router.patch('/:id', auditLog('update_client', 'client'), async (req, res) => {
   if (body.status === 'cancelado' && existing.status !== 'cancelado') {
     void sendWhatsAppMessage(client.whatsapp, templates.contaCancelada(client.nome)).catch(() => {})
     void notifyPanelUsers(
-      client.servico === 'netflix' ? 'clientes_netflix' : 'clientes_iptv',
+      'clientes_netflix',
       `Cliente cancelado: ${client.nome} (${client.whatsapp}).`
     )
   }
@@ -426,21 +459,10 @@ router.patch('/:id', auditLog('update_client', 'client'), async (req, res) => {
       templates.dataRenovacaoAlterada(client.nome, fimStr)
     ).catch(() => {})
   }
-  const iptvChanged =
-    (body.iptvUser != null && body.iptvUser !== existing.iptvUser) ||
-    (body.iptvPass != null && body.iptvPass !== existing.iptvPass) ||
-    (body.iptvMac != null && body.iptvMac !== existing.iptvMac) ||
-    (body.iptvM3u != null && body.iptvM3u !== existing.iptvM3u)
-  if (iptvChanged && client.servico === 'iptv') {
-    void sendWhatsAppMessage(
-      client.whatsapp,
-      templates.credenciaisIptvAtualizadas(client.nome)
-    ).catch(() => {})
-  }
   const netflixChanged =
     (body.pin !== undefined && body.pin !== existing.pin) ||
     (body.perfil != null && body.perfil !== existing.perfil)
-  if (netflixChanged && client.servico === 'netflix') {
+  if (netflixChanged) {
     void sendWhatsAppMessage(
       client.whatsapp,
       templates.credenciaisNetflixAtualizadas(client.nome, client.perfil)
@@ -455,59 +477,81 @@ router.patch('/:id', auditLog('update_client', 'client'), async (req, res) => {
   })
 })
 
-router.post('/:id/renovar', auditLog('renew_client', 'client'), async (req, res) => {
+/**
+ * Regista um pagamento de N meses só para este cliente (cria Pagamento + 1 PeriodoPago por mês).
+ * Body: meses, valorTotal? (por omissão valor mensal × meses), dataPagamento?, inicio?, metodo?, observacoes?
+ * `valor` (mensalidade) e `dias` mantêm-se por compatibilidade com o antigo /renovar.
+ */
+async function registarPagamentoHandler(req: Request, res: Response) {
   const user = (req as unknown as { user: AuthPayload }).user
   const id = Number(req.params.id)
   const client = await prisma.client.findUnique({ where: { id } })
   if (!client) return res.status(404).json({ error: 'Cliente não encontrado' })
   if (!canAccessServico(user.role, client.servico)) return res.status(403).json({ error: 'Sem acesso a este cliente' })
-  if (client.status === 'vencido') return res.status(400).json({ error: 'Cliente vencido. Use Ativar para reativar.' })
-  const { dias, meses, valor } = req.body
-  const mesesAdd = Number(meses) || (dias ? Math.max(1, Math.round(Number(dias) / 30)) : 1)
-  let dataFim: Date
-  if (client.salaId && client.servico === 'netflix') {
-    const sala = await prisma.sala.findUnique({ where: { id: client.salaId } })
-    const base = new Date(sala?.dataFim ?? client.dataFim)
-    dataFim = adicionarMesesADataFim(base, mesesAdd)
-    await prisma.sala.update({ where: { id: client.salaId }, data: { dataFim } })
-    await prisma.client.updateMany({
-      where: { salaId: client.salaId },
-      data: { dataFim, status: 'ativo', whatsappNotificadoVencimentoAt: null },
-    })
-  } else {
-    const base = new Date(client.dataFim)
-    dataFim = adicionarMesesADataFim(base, mesesAdd)
-    await prisma.client.update({
-      where: { id },
-      data: {
-        dataFim,
-        valor: valor != null ? Number(valor) : client.valor,
-        status: 'ativo',
-        whatsappNotificadoVencimentoAt: null,
-      },
-    })
+  if (client.status === 'cancelado') return res.status(400).json({ error: 'Cliente cancelado.' })
+  const body = req.body ?? {}
+  const meses = Number(body.meses) || (body.dias ? Math.max(1, Math.round(Number(body.dias) / 30)) : 1)
+  if (meses < 1 || meses > 24) return res.status(400).json({ error: 'Meses inválidos (1 a 24).' })
+  if (body.valor != null && Number(body.valor) > 0 && Number(body.valor) !== Number(client.valor)) {
+    await prisma.client.update({ where: { id }, data: { valor: Number(body.valor) } })
   }
+  const valorTotal = body.valorTotal != null && body.valorTotal !== '' ? Number(body.valorTotal) : null
+  if (valorTotal != null && (Number.isNaN(valorTotal) || valorTotal < 0)) {
+    return res.status(400).json({ error: 'Valor pago inválido.' })
+  }
+  const { pagamento, dataFim } = await registarPagamentoCliente({
+    clientId: id,
+    meses,
+    valorTotal,
+    dataPagamento: optionalDate(body.dataPagamento),
+    mesInicial: optionalDate(body.mesInicial ?? body.inicio),
+    metodo: body.metodo ? String(body.metodo) : null,
+    observacoes: body.observacoes ? String(body.observacoes).trim() : null,
+    userId: user.userId,
+  })
   const updated = await prisma.client.findUnique({ where: { id }, include: { sala: true } })
   if (!updated) return res.status(404).json({ error: 'Cliente não encontrado' })
-  const fimStr = dataFim.toLocaleDateString('pt-BR')
-  if (client.salaId && client.servico === 'netflix') {
-    const naSala = await prisma.client.findMany({ where: { salaId: client.salaId } })
-    const seen = new Set<string>()
-    for (const c of naSala) {
-      const key = normalizeClientWhatsappKey(c.whatsapp)
-      if (seen.has(key)) continue
-      seen.add(key)
-      const msg = templates.renovado(c.nome, fimStr)
-      void sendWhatsAppMessage(c.whatsapp, msg).catch(() => {})
-    }
-  } else {
-    const msg = templates.renovado(client.nome, fimStr)
-    void sendWhatsAppMessage(client.whatsapp, msg).catch(() => {})
-  }
+  void sendWhatsAppMessage(
+    updated.whatsapp,
+    templates.pagamentoMesesRegistado(
+      updated.nome,
+      pagamento.meses,
+      formatDateBr(pagamento.dataPagamento),
+      formatDateBr(dataFim)
+    )
+  ).catch(() => {})
+  void notifyPanelUsers(
+    'financeiro',
+    `Pagamento registado: ${updated.nome} — ${pagamento.meses} mês(es), ${Number(pagamento.valorTotal).toLocaleString('pt-PT')} kz — pago até ${formatDateBr(dataFim)}.`
+  )
   res.json({
     ...stripPortalPinHash({ ...updated, valor: Number(updated.valor) } as Record<string, unknown>),
     areaClienteAtiva: !!updated.portalPinHash,
+    pagamento: serializePagamento(pagamento),
   })
+}
+
+router.post('/:id/renovar', auditLog('renew_client', 'client'), registarPagamentoHandler)
+router.post('/:id/pagamentos', auditLog('pay_client', 'client'), registarPagamentoHandler)
+
+router.get('/:id/pagamentos', async (req, res) => {
+  const user = (req as unknown as { user: AuthPayload }).user
+  const id = Number(req.params.id)
+  const client = await prisma.client.findUnique({ where: { id }, select: { id: true, servico: true } })
+  if (!client) return res.status(404).json({ error: 'Cliente não encontrado' })
+  if (!canAccessServico(user.role, client.servico)) return res.status(403).json({ error: 'Sem acesso a este cliente' })
+  res.json(await listarPagamentosCliente(id))
+})
+
+router.delete('/:id/pagamentos/:pagamentoId', auditLog('delete_client_payment', 'client'), async (req, res) => {
+  const user = (req as unknown as { user: AuthPayload }).user
+  if (!canAccessFinanceiro(user.role)) {
+    return res.status(403).json({ error: 'Só administradores ou financeiro podem anular pagamentos' })
+  }
+  const id = Number(req.params.id)
+  const removed = await removerPagamentoCliente(id, Number(req.params.pagamentoId))
+  if (!removed) return res.status(404).json({ error: 'Pagamento não encontrado' })
+  res.json(await listarPagamentosCliente(id))
 })
 
 router.post('/:id/marcar-pago', auditLog('mark_paid_client', 'client'), async (req, res) => {
@@ -548,7 +592,7 @@ router.post('/:id/inativar', auditLog('suspend_client', 'client'), async (req, r
     data: { status: 'inativo', whatsappNotificadoVencimentoAt: new Date() },
   })
   void notifyPanelUsers(
-    updated.servico === 'netflix' ? 'clientes_netflix' : 'clientes_iptv',
+    'clientes_netflix',
     `Cliente inativado: ${updated.nome} (${updated.whatsapp}).`
   )
   res.json({
@@ -569,7 +613,7 @@ router.post('/:id/suspender', auditLog('suspend_client', 'client'), async (req, 
     data: { status: 'inativo', whatsappNotificadoVencimentoAt: new Date() },
   })
   void notifyPanelUsers(
-    updated.servico === 'netflix' ? 'clientes_netflix' : 'clientes_iptv',
+    'clientes_netflix',
     `Cliente inativado: ${updated.nome} (${updated.whatsapp}).`
   )
   res.json({
@@ -578,13 +622,12 @@ router.post('/:id/suspender', auditLog('suspend_client', 'client'), async (req, 
   })
 })
 
-/** Próximo dia 11 a partir de hoje (para cliente ficar ativo após ativar). */
-function proximoDia11(): Date {
-  const hoje = new Date()
-  hoje.setHours(0, 0, 0, 0)
-  const dia11 = new Date(hoje.getFullYear(), hoje.getMonth(), 11)
-  if (hoje <= dia11) return dia11
-  return new Date(hoje.getFullYear(), hoje.getMonth() + 1, 11)
+/** Próximo dia 10 (limite de renovação) a partir de hoje: o cliente reativado tem até lá para pagar. */
+function proximoLimiteRenovacao(): Date {
+  const hoje = startOfToday()
+  const limite = limiteRenovacaoDoMes(hoje)
+  if (hoje <= limite) return limite
+  return limiteRenovacaoDoMes(new Date(hoje.getFullYear(), hoje.getMonth() + 1, 1))
 }
 
 router.post('/:id/ativar', auditLog('activate_client', 'client'), async (req, res) => {
@@ -593,7 +636,7 @@ router.post('/:id/ativar', auditLog('activate_client', 'client'), async (req, re
   const existing = await prisma.client.findUnique({ where: { id } })
   if (!existing) return res.status(404).json({ error: 'Cliente não encontrado' })
   if (!canAccessServico(user.role, existing.servico)) return res.status(403).json({ error: 'Sem acesso a este cliente' })
-  const dataFim = proximoDia11()
+  const dataFim = proximoLimiteRenovacao()
   const updated = await prisma.client.update({
     where: { id },
     data: { status: 'ativo', dataFim, whatsappNotificadoVencimentoAt: null },
@@ -602,7 +645,7 @@ router.post('/:id/ativar', auditLog('activate_client', 'client'), async (req, re
   const msgAtiv = templates.reativado(updated.nome, fimStr)
   void sendWhatsAppMessage(updated.whatsapp, msgAtiv).catch(() => {})
   void notifyPanelUsers(
-    updated.servico === 'netflix' ? 'clientes_netflix' : 'clientes_iptv',
+    'clientes_netflix',
     `Cliente reativado: ${updated.nome} — renovação ${fimStr}.`
   )
   res.json({
@@ -620,7 +663,7 @@ router.delete('/:id', auditLog('delete_client', 'client'), async (req, res) => {
   if (!canAccessServico(user.role, existing.servico)) return res.status(403).json({ error: 'Sem acesso a este cliente' })
   void sendWhatsAppMessage(existing.whatsapp, templates.contaEncerrada(existing.nome)).catch(() => {})
   void notifyPanelUsers(
-    existing.servico === 'netflix' ? 'clientes_netflix' : 'clientes_iptv',
+    'clientes_netflix',
     `Cliente eliminado: ${existing.nome} (${existing.whatsapp}).`
   )
   await prisma.client.delete({ where: { id } })

@@ -11,102 +11,161 @@ datasource db {
 
 // Admin / utilizadores do painel (login)
 model User {
-  id        Int      @id @default(autoincrement())
-  nome      String
-  email     String   @unique
-  whatsapp  String?  // contacto WhatsApp (opcional)
-  password  String   // hash bcrypt
+  id          Int      @id @default(autoincrement())
+  nome        String
+  email       String   @unique
+  whatsapp    String? // contacto WhatsApp (opcional)
+  password    String // hash bcrypt
   role        String   @default("geral") // admin | geral | netflix | iptv | financeiro (suporte = geral)
   status      String   @default("ativo") // ativo | suspenso
   alertScopes String?  @map("alert_scopes") // JSON: categorias WhatsApp (null = padrão do perfil)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   auditLogs AuditLog[]
 }
 
-// Clientes (Netflix + IPTV)
+// Clientes (o painel só gere Netflix; registos IPTV antigos ficam na base sem uso)
 model Client {
-  id          Int       @id @default(autoincrement())
-  roveId      String?   @unique @map("rove_id") // Ex: RV20260798
-  nome        String
-  whatsapp    String
-  localizacao String?   // localização do cliente
-  servico     String    // netflix | iptv
-  plano       String    // partilhada | express | premium | mensal | etc.
-  servidorId    Int?
-  servidor      Servidor?   @relation(fields: [servidorId], references: [id])
-  revendedorId  Int?        @map("revendedor_id")
-  revendedor    Revendedor? @relation(fields: [revendedorId], references: [id])
-  perfil        String?     // perfil Netflix ou linha/username IPTV
-  pin           String?     // PIN do perfil Netflix (opcional)
-  // IPTV extra (opcional)
-  iptvUser    String?
-  iptvPass    String?
-  iptvMac     String?
-  iptvM3u     String?
-  dataSubscricao DateTime @default(now()) @map("data_subscricao") // data em que o cliente subscreveu o serviço (mantém-se em renovações)
-  dataInicio  DateTime  @map("data_inicio")
-  dataFim     DateTime  @map("data_fim")
-  valor         Decimal   @db.Decimal(10, 2)  // preço mensal
-  inscricaoPaga Boolean?  @map("inscricao_paga") // Netflix: se já pagou a inscrição
-  salaId       Int?      @map("sala_id")        // Netflix Plano Room: sala (conta) gerida no painel
-  sala         Sala?     @relation(fields: [salaId], references: [id])
-  status        String    @default("ativo") // ativo | vencido | cancelado
-  indicacoes    Int       @default(0)       // total de indicações deste cliente
-  whatsappNotificadoVencimentoAt DateTime? @map("whatsapp_notificado_vencimento_at")
-  portalPinHash String? @map("portal_pin_hash") // PIN bcrypt para login em /cliente
-  portalPinPlain String? @map("portal_pin_plain") // Último PIN em claro p/ admins; actualizado no painel, recuperação e troca em /cliente
-  portalFirstLogin Boolean @default(false) @map("portal_first_login") // true quando admin define PIN e cliente ainda não trocou
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id                             Int         @id @default(autoincrement())
+  roveId                         String?     @unique @map("rove_id") // Ex: RV20260798
+  nome                           String
+  whatsapp                       String
+  localizacao                    String? // localização do cliente
+  servico                        String // netflix (iptv = legado, ignorado pela aplicação)
+  plano                          String // partilhada | express | premium | mensal | etc.
+  servidorId                     Int?
+  servidor                       Servidor?   @relation(fields: [servidorId], references: [id])
+  revendedorId                   Int?        @map("revendedor_id")
+  revendedor                     Revendedor? @relation(fields: [revendedorId], references: [id])
+  perfil                         String? // perfil Netflix
+  pin                            String? // PIN do perfil Netflix (opcional)
+  // IPTV (legado, sem uso — mantido para não perder dados)
+  iptvUser                       String?
+  iptvPass                       String?
+  iptvMac                        String?
+  iptvM3u                        String?
+  dataSubscricao                 DateTime    @default(now()) @map("data_subscricao") // data em que o cliente subscreveu o serviço (mantém-se em renovações)
+  dataInicio                     DateTime    @map("data_inicio")
+  dataFim                        DateTime    @map("data_fim")
+  valor                          Decimal     @db.Decimal(10, 2) // preço mensal
+  inscricaoPaga                  Boolean?    @map("inscricao_paga") // Netflix: se já pagou a inscrição
+  salaId                         Int?        @map("sala_id") // Netflix Plano Room: sala (conta) gerida no painel
+  sala                           Sala?       @relation(fields: [salaId], references: [id])
+  status                         String      @default("ativo") // ativo | vencido | cancelado
+  indicacoes                     Int         @default(0) // total de indicações deste cliente
+  whatsappNotificadoVencimentoAt DateTime?   @map("whatsapp_notificado_vencimento_at")
+  portalPinHash                  String?     @map("portal_pin_hash") // PIN bcrypt para login em /cliente
+  portalPinPlain                 String?     @map("portal_pin_plain") // Último PIN em claro p/ admins; actualizado no painel, recuperação e troca em /cliente
+  portalFirstLogin               Boolean     @default(false) @map("portal_first_login") // true quando admin define PIN e cliente ainda não trocou
+  createdAt                      DateTime    @default(now())
+  updatedAt                      DateTime    @updatedAt
 
   indicacoesComoIndicador Indicacao[] @relation("indicador")
+  pagamentos              Pagamento[]
 
   @@map("clients")
+}
+
+// Pagamento feito pelo cliente (ex.: pagou 3 meses no dia 10/10)
+model Pagamento {
+  id            Int      @id @default(autoincrement())
+  clientId      Int      @map("client_id")
+  client        Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  salaId        Int?     @map("sala_id") // sala em que o cliente estava no momento do pagamento
+  dataPagamento DateTime @map("data_pagamento") // dia em que pagou
+  meses         Int
+  valorTotal    Decimal  @map("valor_total") @db.Decimal(10, 2)
+  metodo        String? // multicaixa | transferencia | dinheiro | outro
+  observacoes   String?
+  origem        String   @default("painel") // painel | inicial (migração/registo do cliente)
+  userId        Int?     @map("user_id") // utilizador do painel que registou
+  createdAt     DateTime @default(now())
+
+  periodos PeriodoPago[]
+
+  @@index([clientId])
+  @@map("pagamentos")
+}
+
+// Um registo por cada mês coberto por um pagamento (3 meses pagos = 3 linhas)
+model PeriodoPago {
+  id           Int       @id @default(autoincrement())
+  pagamentoId  Int       @map("pagamento_id")
+  pagamento    Pagamento @relation(fields: [pagamentoId], references: [id], onDelete: Cascade)
+  clientId     Int       @map("client_id")
+  numero       Int // 1.º, 2.º, 3.º mês deste pagamento
+  inicio       DateTime
+  fim          DateTime
+  valor        Decimal   @db.Decimal(10, 2)
+  notificadoAt DateTime? @map("notificado_at") // aviso de fim deste mês já enviado
+
+  @@index([clientId, fim])
+  @@index([fim])
+  @@map("periodos_pagos")
+}
+
+// Pagamentos que o painel faz pela conta Netflix (sala)
+model PagamentoSala {
+  id            Int      @id @default(autoincrement())
+  salaId        Int      @map("sala_id")
+  sala          Sala     @relation(fields: [salaId], references: [id], onDelete: Cascade)
+  dataPagamento DateTime @map("data_pagamento")
+  meses         Int
+  valor         Decimal  @db.Decimal(10, 2)
+  periodoInicio DateTime @map("periodo_inicio")
+  periodoFim    DateTime @map("periodo_fim")
+  userId        Int?     @map("user_id")
+  createdAt     DateTime @default(now())
+
+  @@index([salaId])
+  @@map("pagamentos_sala")
 }
 
 // Salas Netflix (Plano Room) – contas em que os clientes estão; data fim é da sala (4 usuários partilham)
 model Sala {
   id          Int       @id @default(autoincrement())
-  nome        String    // ex: Sala 1, Conta A
-  email       String?   // email da conta Netflix
-  senha       String?   // senha da conta Netflix
+  nome        String // ex: Sala 1, Conta A
+  email       String? // email da conta Netflix
+  senha       String? // senha da conta Netflix
   observacoes String?
-  dataFim     DateTime? @map("data_fim") // data fim partilhada por todos os clientes da sala
+  dataFim     DateTime? @map("data_fim") // data em que a conta Netflix tem de ser paga (independente da data fim de cada cliente)
   status      String    @default("ativo") // ativo | suspenso
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  clients Client[]
+  clients    Client[]
+  pagamentos PagamentoSala[]
+
   @@map("salas")
 }
 
-// Servidores IPTV
+// Servidores IPTV (legado, sem uso — mantido para não perder dados)
 model Servidor {
-  id            Int       @id @default(autoincrement())
+  id            Int        @id @default(autoincrement())
   nome          String
-  tipo          String    @default("principal") // principal | secundario
-  servidorId    Int?      @map("servidor_id")   // servidor primário (quando tipo=secundario)
-  servidor      Servidor? @relation("primary", fields: [servidorId], references: [id])
+  tipo          String     @default("principal") // principal | secundario
+  servidorId    Int?       @map("servidor_id") // servidor primário (quando tipo=secundario)
+  servidor      Servidor?  @relation("primary", fields: [servidorId], references: [id])
   secundarios   Servidor[] @relation("primary")
-  totalClientes Int      @default(0) @map("total_clientes")
-  mensalidade   Decimal? @db.Decimal(10, 2) // custo mensal do servidor (principal)
-  dataPagamento DateTime? @map("data_pagamento") // próxima data de pagamento do servidor
-  status        String    @default("online")    // online | instável | offline
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  totalClientes Int        @default(0) @map("total_clientes")
+  mensalidade   Decimal?   @db.Decimal(10, 2) // custo mensal do servidor (principal)
+  dataPagamento DateTime?  @map("data_pagamento") // próxima data de pagamento do servidor
+  status        String     @default("online") // online | instável | offline
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
 
-  clients     Client[]
+  clients      Client[]
   revendedores Revendedor[]
+
   @@map("servidores")
 }
 
-// Revendedores do serviço IPTV
+// Revendedores IPTV (legado, sem uso — mantido para não perder dados)
 model Revendedor {
   id          Int       @id @default(autoincrement())
   nome        String
-  contacto    String    // telefone / WhatsApp
+  contacto    String // telefone / WhatsApp
   servidorId  Int?      @map("servidor_id")
   servidor    Servidor? @relation(fields: [servidorId], references: [id])
   observacoes String?
@@ -135,14 +194,14 @@ model Indicacao {
 
 // Log de alterações (auditoria)
 model AuditLog {
-  id         Int      @id @default(autoincrement())
-  userId     Int      @map("user_id")
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  action     String   // create_client | update_client | renew | suspend | delete_client | etc.
-  entity     String   // client | servidor | indicacao | user
-  entityId   Int?     @map("entity_id")
-  details    String?  // JSON ou texto
-  createdAt  DateTime @default(now())
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String // create_client | update_client | renew | suspend | delete_client | etc.
+  entity    String // client | servidor | indicacao | user
+  entityId  Int?     @map("entity_id")
+  details   String? // JSON ou texto
+  createdAt DateTime @default(now())
 
   @@map("audit_logs")
 }

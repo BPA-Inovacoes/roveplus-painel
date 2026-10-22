@@ -8,7 +8,7 @@ import { TablePagination, ROWS_PER_PAGE } from '../../components/TablePagination
 import { mesesPagamentoLabel, RoveFormLabel } from '../../components/roveFormUi'
 import { FinanceiroActionBtn } from './FinanceiroActionBtn'
 import { FinanceiroConfirmModal } from './FinanceiroConfirmModal'
-import type { ClienteFinanceiro, CobrancaFiltro, ServicoView } from './types'
+import type { ClienteFinanceiro, CobrancaFiltro } from './types'
 
 function daysUntil(dateStr: string): number {
   const d = new Date(dateStr)
@@ -19,14 +19,10 @@ function daysUntil(dateStr: string): number {
 }
 
 export function FinanceiroCobrancas({
-  servicoView,
   initialFiltro,
-  servidorId,
   onChanged,
 }: {
-  servicoView: ServicoView
   initialFiltro?: CobrancaFiltro
-  servidorId?: number | null
   onChanged?: () => void
 }) {
   const { showError, showInfo } = useAlert()
@@ -48,13 +44,11 @@ export function FinanceiroCobrancas({
   const load = useCallback(() => {
     setLoading(true)
     const params = new URLSearchParams()
-    if (servicoView === 'iptv') params.set('servico', 'iptv')
-    else if (servicoView === 'netflix') params.set('servico', 'netflix')
-    if (servidorId) params.set('servidorId', String(servidorId))
     if (filtro === 'vencidos') params.set('status', 'vencido')
     else if (filtro === 'hoje') params.set('vencendo', 'hoje')
     else if (filtro === '7dias') params.set('vencendo', '7dias')
     else if (filtro === 'ativos') params.set('status', 'ativo')
+    else if (filtro === 'porPagarMes') params.set('porPagarMes', '1')
     return api
       .get<ClienteFinanceiro[]>(`/api/clients?${params}`)
       .then((rows) => setClients(Array.isArray(rows) ? rows : []))
@@ -63,7 +57,7 @@ export function FinanceiroCobrancas({
         setClients([])
       })
       .finally(() => setLoading(false))
-  }, [filtro, servicoView, servidorId, showError])
+  }, [filtro, showError])
 
   useEffect(() => {
     setTablePage(1)
@@ -152,6 +146,7 @@ export function FinanceiroCobrancas({
               onChange={(e) => setFiltro(e.target.value as CobrancaFiltro)}
               title="Filtrar cobranças"
             >
+              <option value="porPagarMes">Por pagar este mês</option>
               <option value="vencidos">Em dívida (vencidos)</option>
               <option value="hoje">Vencem hoje</option>
               <option value="7dias">Vencem em 7 dias</option>
@@ -159,11 +154,6 @@ export function FinanceiroCobrancas({
               <option value="todos">Todos</option>
             </RoveSelect>
           </div>
-          {servidorId != null && (
-            <span className="text-xs text-blue-300 bg-blue-900/30 border border-blue-500/30 px-2 py-1 rounded-lg">
-              Filtrado por servidor
-            </span>
-          )}
           <span className="text-sm text-gray-400 ml-auto">
             {clients.length} cliente(s) · <strong className="text-white">{totalValor.toFixed(2)} kz</strong>
           </span>
@@ -183,7 +173,7 @@ export function FinanceiroCobrancas({
                   <tr className="text-gray-400 border-b border-netflix-border">
                     <th className="text-left py-2 px-3">Cliente</th>
                     <th className="text-left py-2 px-3">Contacto</th>
-                    <th className="text-left py-2 px-3">Serviço</th>
+                    <th className="text-left py-2 px-3">Sala</th>
                     <th className="text-right py-2 px-3">Valor</th>
                     <th className="text-left py-2 px-3">Vencimento</th>
                     <th className="text-left py-2 px-3">Estado</th>
@@ -200,15 +190,7 @@ export function FinanceiroCobrancas({
                         <td className="py-2 px-3">
                           <RoveWhatsappLink value={c.whatsapp} compact />
                         </td>
-                        <td className="py-2 px-3 text-gray-300 capitalize">
-                          {c.servico}
-                          {c.servico === 'iptv' && c.servidor?.nome && (
-                            <span className="block text-xs text-gray-500">{c.servidor.nome}</span>
-                          )}
-                          {c.servico === 'netflix' && c.sala?.nome && (
-                            <span className="block text-xs text-gray-500">{c.sala.nome}</span>
-                          )}
-                        </td>
+                        <td className="py-2 px-3 text-gray-300">{c.sala?.nome ?? '—'}</td>
                         <td className="py-2 px-3 text-right font-medium text-white">
                           {Number(c.valor).toFixed(2)} kz
                         </td>
@@ -330,7 +312,7 @@ export function FinanceiroCobrancas({
             </>
           ) : undefined
         }
-        description="O cliente passará a estado ativo. O vencimento será definido para o próximo dia 11."
+        description="O cliente passará a estado ativo e terá até ao próximo dia 10 para renovar."
         detail="Será enviada uma mensagem WhatsApp de reativação."
         confirmLabel="Reativar"
         loading={submitting}
@@ -358,7 +340,7 @@ export function FinanceiroCobrancas({
             </>
           ) : undefined
         }
-        description="Escolha quantos meses de pagamento atribuir. O vencimento mantém o dia da data atual."
+        description="Escolha quantos meses foram pagos (meses de calendário). A próxima renovação fica entre o dia 1 e o dia 10 do mês seguinte ao último mês pago."
         confirmLabel="Confirmar renovação"
         confirmDisabled={renovarMeses === ''}
         loading={submitting}

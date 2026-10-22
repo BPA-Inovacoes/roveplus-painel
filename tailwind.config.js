@@ -29,6 +29,21 @@ export default {
           border: '#2f2f2f',
           hover: '#2a2a2a',
         },
+        // Cores de dados (gráficos e indicadores) – validadas para o fundo escuro do painel.
+        // series: cor única dos dados (o vermelho da marca fica para a interface, não para dados).
+        // good/warning/critical: estados (pago / atenção / vencido) – usar sempre com ícone ou texto.
+        viz: {
+          series: '#3987e5',
+          'series-soft': '#1c5cab',
+          good: '#0ca30c',
+          warning: '#fab219',
+          critical: '#d03b3b',
+          muted: '#898781',
+          grid: '#2c2c2a',
+          axis: '#383835',
+          ink: '#f0efec',
+          'ink-2': '#c3c2b7',
+        },
         // Manter secondary/accent para compatibilidade (tons neutros escuros)
         secondary: {
           50: '#f8fafc',

@@ -42,7 +42,7 @@ function diasAteDataFim(dataFim: Date): number {
 async function findClientByWhatsappInput(input: string) {
   const key = normalizeClientWhatsappKey(input)
   if (key.length < 8) return null
-  const rows = await prisma.client.findMany({ select: { id: true, whatsapp: true } })
+  const rows = await prisma.client.findMany({ where: { servico: 'netflix' }, select: { id: true, whatsapp: true } })
   const hit = rows.find((r) => normalizeClientWhatsappKey(r.whatsapp) === key)
   if (!hit) return null
   return prisma.client.findUnique({ where: { id: hit.id } })
@@ -157,7 +157,7 @@ router.get('/me', clientPortalMiddleware, async (req, res) => {
   await ensurePortalFirstLoginColumn().catch(() => {})
   const client = await prisma.client.findUnique({
     where: { id: clientId },
-    include: { sala: { select: { id: true, nome: true, dataFim: true } }, servidor: { select: { id: true, nome: true, status: true } }, revendedor: { select: { nome: true } } },
+    include: { sala: { select: { id: true, nome: true, dataFim: true } } },
   })
   if (!client) return res.status(401).json({ error: 'Sessão inválida' })
   const roveId = await ensureClientRoveId(clientId).catch(() => null)
@@ -183,15 +183,7 @@ router.get('/me', clientPortalMiddleware, async (req, res) => {
     pin: client.pin,
     localizacao: client.localizacao,
     sala: client.sala,
-    servidor: client.servidor,
-    revendedor: client.revendedor,
-    iptvUser: client.iptvUser,
-    iptvPassSet: !!(client.iptvPass && String(client.iptvPass).length > 0),
-    iptvPass:
-      client.iptvPass && String(client.iptvPass).length > 0 ? String(client.iptvPass) : null,
-    iptvMac: client.iptvMac,
     roveId,
-    iptvM3u: client.iptvM3u,
     inscricaoPaga: client.inscricaoPaga,
     indicacoes: client.indicacoes,
     portalFirstLogin: portalFlag,
@@ -442,10 +434,6 @@ async function loadAssistantContext(clientId: number): Promise<ClientAssistantCo
       valor: true,
       perfil: true,
       pin: true,
-      iptvUser: true,
-      iptvPass: true,
-      iptvMac: true,
-      iptvM3u: true,
       inscricaoPaga: true,
       indicacoes: true,
     },
@@ -469,10 +457,6 @@ async function loadAssistantContext(clientId: number): Promise<ClientAssistantCo
     valor: Number(client.valor),
     perfil: client.perfil,
     pin: client.pin,
-    iptvUser: client.iptvUser,
-    iptvPass: client.iptvPass && String(client.iptvPass).length > 0 ? String(client.iptvPass) : null,
-    iptvMac: client.iptvMac,
-    iptvM3u: client.iptvM3u,
     inscricaoPaga: client.inscricaoPaga,
     indicacoes: client.indicacoes,
     portalFirstLogin,

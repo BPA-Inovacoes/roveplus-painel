@@ -15,7 +15,7 @@ import {
 export type { PanelAlertCategory } from './panelAlertPrefs.js'
 
 /** @deprecated Usar PanelAlertCategory em notifyPanelUsers */
-export type PanelAlertScope = 'admin' | 'geral' | 'financeiro' | 'netflix' | 'iptv' | 'suporte' | 'all'
+export type PanelAlertScope = 'admin' | 'geral' | 'financeiro' | 'netflix' | 'suporte' | 'all'
 
 /** Envia alerta WhatsApp a operadores com a categoria activa nas preferências. */
 export async function notifyPanelUsers(
@@ -96,17 +96,6 @@ export async function notifySalaClients(
     const body = typeof message === 'string' ? message : message(c.nome, fim)
     void sendWhatsAppMessage(c.whatsapp, body).catch(() => {})
   }
-}
-
-export async function notifyServidorClients(
-  servidorId: number,
-  buildMessage: (nome: string) => string
-): Promise<void> {
-  const clients = await prisma.client.findMany({
-    where: { servidorId, servico: 'iptv', status: { in: ['ativo', 'vencido'] } },
-    select: { nome: true, whatsapp: true },
-  })
-  await notifyUniqueClients(clients, buildMessage)
 }
 
 export function clientAreaUrl(): string {

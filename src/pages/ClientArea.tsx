@@ -7,7 +7,6 @@ import {
   Calendar,
   Tv,
   Film,
-  Server,
   ExternalLink,
   MessageCircle,
   Copy,
@@ -35,6 +34,7 @@ import { useAlert } from '../contexts/AlertContext'
 import { ROVE_PUBLIC_SITE_URL } from '../lib/roveSite'
 import { NETFLIX_LOGIN_URL } from '../lib/netflix'
 import { ClientAssistantBot, type ClientTab } from '../components/cliente/ClientAssistantBot'
+import { LoadingButton } from '../components/LoadingButton'
 
 const WA_BUSINESS = '244933623143'
 
@@ -53,13 +53,6 @@ export interface ClientPortalMe {
   pin: string | null
   localizacao: string | null
   sala: { id: number; nome: string; dataFim: string | null } | null
-  servidor: { id: number; nome: string; status: string } | null
-  revendedor: { nome: string } | null
-  iptvUser: string | null
-  iptvPassSet: boolean
-  iptvPass: string | null
-  iptvMac: string | null
-  iptvM3u: string | null
   inscricaoPaga: boolean | null
   indicacoes: number
   portalFirstLogin: boolean
@@ -115,7 +108,7 @@ function buildRenewWaText(me: ClientPortalMe) {
   const lines = [
     'Olá Rove+, quero renovar o meu plano.',
     `Cliente: ${me.nome}`,
-    `Plano: ${me.plano} (${me.servico === 'netflix' ? 'Netflix' : 'IPTV'})`,
+    `Plano: ${me.plano} (Netflix)`,
     `Vencimento: ${formatDate(me.dataFim)}`,
     `Valor mensal: ${Number(me.valor).toLocaleString('pt-BR')} kz`,
   ]
@@ -413,22 +406,11 @@ export default function ClientArea() {
 
   const tabItems: { id: ClientTab; label: string; Icon: typeof User; badge?: number }[] = [
     { id: 'inicio', label: 'Início', Icon: User },
-    { id: 'servico', label: clientMe.servico === 'netflix' ? 'Netflix' : 'IPTV', Icon: clientMe.servico === 'netflix' ? Film : Tv },
+    { id: 'servico', label: 'Netflix', Icon: Film },
     { id: 'renovar', label: 'Renovar', Icon: Calendar },
     { id: 'indicar', label: 'Indicar', Icon: Gift },
     { id: 'conta', label: 'Conta', Icon: Shield, badge: alertNotifCount > 0 ? alertNotifCount : undefined },
   ]
-
-  function copyAllIptv() {
-    const lines = [
-      `Utilizador: ${clientMe.perfil || clientMe.iptvUser || '—'}`,
-      clientMe.iptvPass ? `Senha: ${clientMe.iptvPass}` : null,
-      clientMe.iptvMac ? `MAC: ${clientMe.iptvMac}` : null,
-      clientMe.iptvM3u ? `M3U: ${clientMe.iptvM3u}` : null,
-      clientMe.servidor ? `Servidor: ${clientMe.servidor.nome}` : null,
-    ].filter(Boolean)
-    copyText(lines.join('\n'), 'iptv-all')
-  }
 
   return (
     <div className="min-h-screen bg-netflix-bg text-gray-200 relative overflow-x-hidden">
@@ -665,7 +647,6 @@ export default function ClientArea() {
               exit={{ opacity: 0, y: -8 }}
               className="space-y-4"
             >
-              {me.servico === 'netflix' ? (
                 <section className="rounded-2xl border border-red-500/20 bg-gradient-to-b from-red-950/20 to-netflix-card/60 p-6">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-5">
                     <div className="flex items-center gap-3">
@@ -717,76 +698,6 @@ export default function ClientArea() {
                     </button>
                   )}
                 </section>
-              ) : (
-                <section className="rounded-2xl border border-violet-500/20 bg-gradient-to-b from-violet-950/25 to-netflix-card/60 p-6">
-                  <div className="flex items-center justify-between gap-3 mb-5">
-                    <div className="flex items-center gap-3">
-                      <Tv className="w-6 h-6 text-violet-400" />
-                      <div>
-                        <h2 className="text-lg font-semibold text-white">IPTV</h2>
-                        <p className="text-xs text-gray-500">Linha, servidor e lista M3U</p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={copyAllIptv}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-violet-500/30 bg-violet-600/15 text-violet-200 text-xs hover:bg-violet-600/25"
-                    >
-                      <Copy className="w-3.5 h-3.5" />
-                      {copiedField === 'iptv-all' ? 'Copiado!' : 'Copiar tudo'}
-                    </button>
-                  </div>
-                  {(me.perfil || me.iptvUser) && (
-                    <CopyField
-                      label="Utilizador / linha"
-                      value={me.perfil || me.iptvUser || ''}
-                      fieldId="iptv-user"
-                      copiedField={copiedField}
-                      onCopy={copyText}
-                    />
-                  )}
-                  {me.iptvPass && (
-                    <CopyField
-                      label="Palavra-passe"
-                      value={me.iptvPass}
-                      fieldId="iptv-pass"
-                      copiedField={copiedField}
-                      onCopy={copyText}
-                    />
-                  )}
-                  {!me.iptvPass && me.iptvPassSet && (
-                    <InfoRow label="Palavra-passe">Definida — contacte a Rove+ se precisar</InfoRow>
-                  )}
-                  {me.iptvMac && (
-                    <CopyField
-                      label="MAC"
-                      value={me.iptvMac}
-                      fieldId="iptv-mac"
-                      copiedField={copiedField}
-                      onCopy={copyText}
-                    />
-                  )}
-                  {me.iptvM3u && (
-                    <CopyField
-                      label="Lista M3U"
-                      value={me.iptvM3u}
-                      fieldId="iptv-m3u"
-                      copiedField={copiedField}
-                      onCopy={copyText}
-                    />
-                  )}
-                  {me.servidor && (
-                    <InfoRow label="Servidor">
-                      <span className="inline-flex items-center gap-2">
-                        <Server className="w-4 h-4 text-gray-500" />
-                        {me.servidor.nome}
-                        <span className="text-xs text-gray-500">({me.servidor.status})</span>
-                      </span>
-                    </InfoRow>
-                  )}
-                  {me.revendedor && <InfoRow label="Revendedor">{me.revendedor.nome}</InfoRow>}
-                </section>
-              )}
             </motion.div>
           )}
 
@@ -833,7 +744,7 @@ export default function ClientArea() {
               <section className="rounded-2xl border border-white/[0.08] bg-netflix-card/70 p-6">
                 <h2 className="font-semibold text-white mb-4">Detalhes do plano</h2>
                 <InfoRow label="Plano">{me.plano}</InfoRow>
-                <InfoRow label="Serviço">{me.servico === 'netflix' ? 'Netflix' : 'IPTV'}</InfoRow>
+                <InfoRow label="Serviço">Netflix</InfoRow>
                 <InfoRow label="Valor mensal">{Number(me.valor).toLocaleString('pt-BR')} kz</InfoRow>
                 <InfoRow label="Subscrição">{formatDate(me.dataSubscricao)}</InfoRow>
                 <InfoRow label="Início">{formatDate(me.dataInicio)}</InfoRow>
@@ -915,14 +826,14 @@ export default function ClientArea() {
                       </div>
                     </div>
                   </div>
-                  <button
+                  <LoadingButton
                     type="submit"
-                    disabled={indSubmitting}
+                    loading={indSubmitting}
                     className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold disabled:opacity-50"
                   >
-                    <Gift className="w-4 h-4" />
+                    {!indSubmitting && <Gift className="w-4 h-4" />}
                     {indSubmitting ? 'A registar…' : 'Registar indicação'}
-                  </button>
+                  </LoadingButton>
                 </form>
               </section>
 
@@ -1133,13 +1044,13 @@ export default function ClientArea() {
                     Fechar
                   </button>
                 )}
-                <button
+                <LoadingButton
                   type="submit"
-                  disabled={changingPin}
+                  loading={changingPin}
                   className={`${mustChangePinNow ? 'w-full' : 'flex-1'} py-2.5 px-4 bg-primary-600 text-white rounded-xl text-sm font-medium hover:bg-primary-700 disabled:opacity-50`}
                 >
                   {changingPin ? 'A guardar…' : 'Alterar PIN'}
-                </button>
+                </LoadingButton>
               </div>
             </form>
           </div>

@@ -5,12 +5,12 @@ import { useAuth } from '../contexts/AuthContext'
 import { useAlert } from '../contexts/AlertContext'
 import { api } from '../api/client'
 import { tratamentoNome } from '../utils/tratamento'
+import { LoadingButton } from '../components/LoadingButton'
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Administrador',
   geral: 'Operador (geral)',
   netflix: 'Operador Netflix',
-  iptv: 'Operador IPTV',
   suporte: 'Suporte',
   financeiro: 'Financeiro',
 }
@@ -19,7 +19,6 @@ const ROLE_PILL: Record<string, string> = {
   admin: 'bg-amber-500/20 text-amber-100 border-amber-400/35',
   geral: 'bg-sky-500/15 text-sky-200 border-sky-400/35',
   netflix: 'bg-red-500/20 text-red-200 border-red-400/35',
-  iptv: 'bg-violet-500/20 text-violet-200 border-violet-400/35',
   suporte: 'bg-emerald-500/15 text-emerald-200 border-emerald-400/35',
   financeiro: 'bg-lime-500/15 text-lime-200 border-lime-400/35',
 }
@@ -350,14 +349,14 @@ export default function MeuPerfil() {
               transition={{ delay: 0.15 }}
               className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3 pt-1"
             >
-              <button
+              <LoadingButton
                 type="submit"
-                disabled={saving}
+                loading={saving}
                 className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold shadow-lg shadow-primary-900/25 disabled:opacity-50 transition-colors w-full sm:w-auto"
               >
-                <Save className="w-5 h-5" />
+                {!saving && <Save className="w-5 h-5" />}
                 {saving ? 'A guardar…' : 'Guardar alterações'}
-              </button>
+              </LoadingButton>
             </motion.div>
           </div>
         </div>

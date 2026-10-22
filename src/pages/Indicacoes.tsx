@@ -14,6 +14,8 @@ import {
 import { emptyWhatsapp, formatWhatsapp, isWhatsappValid, nationalDigitsFromWhatsapp } from '../utils/whatsapp'
 import { api } from '../api/client'
 import { useAlert } from '../contexts/AlertContext'
+import { LoadingButton } from '../components/LoadingButton'
+import { useBusy } from '../lib/useBusy'
 import { TablePagination, ROWS_PER_PAGE } from '../components/TablePagination'
 
 const emptyForm = () => ({
@@ -45,6 +47,7 @@ export default function Indicacoes() {
   const [list, setList] = useState<Indicacao[]>([])
   const [clients, setClients] = useState<Client[]>([])
   const [loading, setLoading] = useState(true)
+  const { busy, run } = useBusy()
   const [filter, setFilter] = useState({ status: '' })
   const [search, setSearch] = useState('')
   const [searchDebounced, setSearchDebounced] = useState('')
@@ -410,13 +413,13 @@ export default function Indicacoes() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={confirmarAprovar}
+              <LoadingButton
+                onClick={() => run('aprovar', confirmarAprovar)}
+                loading={busy === 'aprovar'}
                 className="flex-1 py-2.5 px-4 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 transition-colors shadow-lg shadow-green-900/30"
               >
                 Confirmar
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
@@ -456,13 +459,13 @@ export default function Indicacoes() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={confirmarReverter}
+              <LoadingButton
+                onClick={() => run('reverter', confirmarReverter)}
+                loading={busy === 'reverter'}
                 className="flex-1 py-2.5 px-4 bg-amber-600 text-white rounded-xl text-sm font-medium hover:bg-amber-700 transition-colors shadow-lg shadow-amber-900/30"
               >
                 Reverter
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
@@ -497,13 +500,13 @@ export default function Indicacoes() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={confirmarExcluir}
+              <LoadingButton
+                onClick={() => run('excluir', confirmarExcluir)}
+                loading={busy === 'excluir'}
                 className="flex-1 py-2.5 px-4 bg-red-600 text-white rounded-xl text-sm font-medium hover:bg-red-700 transition-colors shadow-lg shadow-red-900/30"
               >
                 Excluir
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
@@ -624,13 +627,13 @@ export default function Indicacoes() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={save}
+              <LoadingButton
+                onClick={() => run('guardar', save)}
+                loading={busy === 'guardar'}
                 className="flex-1 py-1.5 px-3 bg-primary-600 text-white rounded-lg text-xs font-medium hover:bg-primary-700 transition-colors shadow-lg shadow-primary-900/30"
               >
                 Guardar
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </RoveModalOverlay>
