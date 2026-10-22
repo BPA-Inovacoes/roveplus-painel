@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Eye, EyeOff, LayoutGrid, Users, Wallet, X } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Eye, EyeOff, LayoutGrid, Search, UserPlus, Users, Wallet, X } from 'lucide-react'
 import { RoveModalOverlay } from './RoveModalOverlay'
 import { RoveWhatsappLink } from './RoveWhatsappLink'
 import { mesesPagamentoLabel } from './roveFormUi'
@@ -18,6 +19,17 @@ interface SalaCliente {
   dataFim: string
   valor: number
   status: string
+}
+
+interface ClienteCandidato {
+  id: number
+  roveId: string | null
+  nome: string
+  whatsapp: string
+  perfil: string | null
+  status: string
+  salaId: number | null
+  sala: { nome: string } | null
 }
 
 interface SalaPagamento {
@@ -82,13 +94,26 @@ function InfoLinha({ label, children }: { label: string; children: React.ReactNo
   )
 }
 
-export function SalaDetalhesModal({ salaId, onClose }: { salaId: number; onClose: () => void }) {
-  const { showError } = useAlert()
+export function SalaDetalhesModal({
+  salaId,
+  onClose,
+  onChanged,
+}: {
+  salaId: number
+  onClose: () => void
+  /** Chamado depois de adicionar um cliente (para atualizar a contagem de lugares na lista de salas). */
+  onChanged?: () => void
+}) {
+  const { showError, showInfo } = useAlert()
   const [data, setData] = useState<SalaDetalhes | null>(null)
   const [showSenha, setShowSenha] = useState(false)
   const [showPins, setShowPins] = useState(false)
+  const [adicionar, setAdicionar] = useState(false)
+  const [candidatos, setCandidatos] = useState<ClienteCandidato[] | null>(null)
+  const [pesquisa, setPesquisa] = useState('')
+  const [aAdicionar, setAAdicionar] = useState<number | null>(null)
 
-  useEffect(() => {
+  function load() {
     api
       .get<SalaDetalhes>(`/api/salas/${salaId}`)
       .then(setData)
@@ -96,7 +121,48 @@ export function SalaDetalhesModal({ salaId, onClose }: { salaId: number; onClose
         showError(e instanceof Error ? e.message : 'Erro ao carregar detalhes da sala')
         onClose()
       })
-  }, [salaId])
+  }
+
+  useEffect(load, [salaId])
+
+  function abrirAdicionar() {
+    setAdicionar(true)
+    setPesquisa('')
+    setCandidatos(null)
+    api
+      .get<ClienteCandidato[]>('/api/clients')
+      .then(setCandidatos)
+      .catch((e) => showError(e instanceof Error ? e.message : 'Erro ao carregar clientes'))
+  }
+
+  async function adicionarCliente(c: ClienteCandidato) {
+    setAAdicionar(c.id)
+    try {
+      await api.patch(`/api/clients/${c.id}`, { salaId })
+      showInfo(`${c.nome} ${c.salaId ? 'transferido para' : 'adicionado a'} ${data?.nome ?? 'esta sala'}.`)
+      setCandidatos((list) => list?.map((x) => (x.id === c.id ? { ...x, salaId, sala: null } : x)) ?? null)
+      load()
+      onChanged?.()
+    } catch (e) {
+      showError(e instanceof Error ? e.message : 'Erro ao adicionar cliente à sala')
+    } finally {
+      setAAdicionar(null)
+    }
+  }
+
+  // Clientes que podem entrar nesta sala: não cancelados e noutra sala ou sem sala (sem sala primeiro).
+  const termo = pesquisa.trim().toLowerCase()
+  const disponiveis = (candidatos ?? [])
+    .filter((c) => c.salaId !== salaId && c.status !== 'cancelado')
+    .filter(
+      (c) =>
+        !termo ||
+        c.nome.toLowerCase().includes(termo) ||
+        c.whatsapp.includes(termo) ||
+        (c.roveId ?? '').toLowerCase().includes(termo) ||
+        (c.perfil ?? '').toLowerCase().includes(termo)
+    )
+    .sort((a, b) => Number(a.salaId != null) - Number(b.salaId != null) || a.nome.localeCompare(b.nome))
 
   const ativa = (data?.status || 'ativo') === 'ativo'
   const diasSala = data?.dataFim ? daysUntil(data.dataFim) : null
@@ -187,17 +253,88 @@ export function SalaDetalhesModal({ salaId, onClose }: { salaId: number; onClose
                   <Users className="w-3.5 h-3.5" />
                   Clientes na sala ({data.clients.length})
                 </p>
-                {data.clients.some((c) => c.pin) && (
+                <div className="flex items-center gap-3">
+                  {data.clients.some((c) => c.pin) && (
+                    <button
+                      type="button"
+                      onClick={() => setShowPins((v) => !v)}
+                      className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-white"
+                    >
+                      {showPins ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      {showPins ? 'Ocultar PIN' : 'Mostrar PIN'}
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={() => setShowPins((v) => !v)}
-                    className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-white"
+                    onClick={() => (adicionar ? setAdicionar(false) : abrirAdicionar())}
+                    disabled={!adicionar && lugaresOcupados >= MAX_CLIENTES_POR_SALA}
+                    title={
+                      lugaresOcupados >= MAX_CLIENTES_POR_SALA
+                        ? `Sala cheia (máximo ${MAX_CLIENTES_POR_SALA} clientes)`
+                        : 'Adicionar um cliente a esta sala'
+                    }
+                    className="inline-flex items-center gap-1 rounded-lg border border-sky-500/40 bg-sky-500/10 px-2 py-1 text-xs text-sky-300 hover:bg-sky-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    {showPins ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    {showPins ? 'Ocultar PIN' : 'Mostrar PIN'}
+                    {adicionar ? <X className="w-3.5 h-3.5" /> : <UserPlus className="w-3.5 h-3.5" />}
+                    {adicionar ? 'Fechar' : 'Adicionar cliente'}
                   </button>
-                )}
+                </div>
               </div>
+              {adicionar && (
+                <div className="mb-3 rounded-xl border border-sky-500/30 bg-sky-950/10 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs text-gray-400">
+                      {MAX_CLIENTES_POR_SALA - lugaresOcupados > 0
+                        ? `${MAX_CLIENTES_POR_SALA - lugaresOcupados} lugar(es) livre(s). Clientes de outra sala são transferidos.`
+                        : 'Sala cheia.'}
+                    </p>
+                    <Link to="/clientes" className="text-xs text-sky-300 hover:underline shrink-0">
+                      Criar novo cliente
+                    </Link>
+                  </div>
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-gray-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      autoFocus
+                      value={pesquisa}
+                      onChange={(e) => setPesquisa(e.target.value)}
+                      placeholder="Pesquisar por nome, contacto, perfil ou ID"
+                      className="w-full pl-8 pr-2.5 py-1.5 bg-netflix-panel border border-netflix-border rounded-lg text-xs text-white placeholder-gray-500 focus:ring-2 focus:ring-sky-500/40 outline-none"
+                    />
+                  </div>
+                  {!candidatos ? (
+                    <p className="text-xs text-gray-500 py-2">A carregar clientes...</p>
+                  ) : disponiveis.length === 0 ? (
+                    <p className="text-xs text-gray-500 py-2">Nenhum cliente encontrado.</p>
+                  ) : (
+                    <ul className="max-h-60 overflow-y-auto divide-y divide-netflix-border/60 rounded-lg border border-netflix-border/60">
+                      {disponiveis.map((c) => (
+                        <li key={c.id} className="flex items-center justify-between gap-2 px-3 py-2">
+                          <div className="min-w-0">
+                            <p className="text-sm text-white truncate">
+                              {c.nome}
+                              {c.roveId && <span className="ml-1.5 text-[11px] text-primary-300">{c.roveId}</span>}
+                            </p>
+                            <p className="text-[11px] text-gray-500 truncate">
+                              {c.whatsapp} · {c.sala ? `Na ${c.sala.nome}` : 'Sem sala'}
+                              {c.perfil ? ` · perfil ${c.perfil}` : ''}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => adicionarCliente(c)}
+                            disabled={aAdicionar != null || lugaresOcupados >= MAX_CLIENTES_POR_SALA}
+                            className="shrink-0 rounded-lg bg-sky-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+                          >
+                            {aAdicionar === c.id ? 'A adicionar...' : c.salaId ? 'Transferir' : 'Adicionar'}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
               {data.clients.length === 0 ? (
                 <p className="text-sm text-gray-500">Nenhum cliente nesta sala.</p>
               ) : (

@@ -28,6 +28,7 @@ export function ensurePagamentosTables(): Promise<void> {
           "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
       `)
+      await prisma.$executeRawUnsafe(`ALTER TABLE pagamentos ADD COLUMN IF NOT EXISTS atraso_manual BOOLEAN`)
       await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS pagamentos_client_id_idx ON pagamentos(client_id)`)
       await prisma.$executeRawUnsafe(`
         CREATE TABLE IF NOT EXISTS periodos_pagos (
@@ -129,6 +130,48 @@ function dataFimDoPeriodo(fim: Date): Date {
   return fim.getDate() === 1 ? limiteRenovacaoDoMes(fim) : fim
 }
 
+/**
+ * Mês de calendário que um período cobre. Períodos de calendário começam no dia 1;
+ * períodos antigos (dia de cobrança) contam o próprio mês até ao dia 15, depois o seguinte (como proximoMesAPagar).
+ */
+export function mesCoberto(inicio: Date): Date {
+  const d = new Date(inicio)
+  return new Date(d.getFullYear(), d.getMonth() + (d.getDate() > 15 ? 1 : 0), 1)
+}
+
+function chaveMes(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+/** Lança `mes-ja-pago:<AAAA-MM>` se algum dos meses já estiver coberto por outro pagamento do cliente. */
+async function garantirMesesLivres(clientId: number, meses: Date[], ignorarPagamentoId?: number) {
+  const existentes = await prisma.periodoPago.findMany({
+    where: { clientId, ...(ignorarPagamentoId ? { NOT: { pagamentoId: ignorarPagamentoId } } : {}) },
+    select: { inicio: true },
+  })
+  const ocupados = new Set(existentes.map((p) => chaveMes(mesCoberto(p.inicio))))
+  const repetido = meses.find((m) => ocupados.has(chaveMes(m)))
+  if (repetido) throw new Error(`mes-ja-pago:${chaveMes(repetido)}`)
+}
+
+/** Recalcula Client.dataFim (e ativo/vencido) a partir do último período pago. */
+async function sincronizarDataFim(clientId: number) {
+  const ultimo = await prisma.periodoPago.findFirst({ where: { clientId }, orderBy: { fim: 'desc' } })
+  if (!ultimo) return null
+  const dataFim = dataFimDoPeriodo(ultimo.fim)
+  const client = await prisma.client.findUnique({ where: { id: clientId }, select: { status: true } })
+  const today = startOfToday()
+  await prisma.client.update({
+    where: { id: clientId },
+    data: {
+      dataFim,
+      ...(client?.status === 'ativo' && dataFim < today ? { status: 'vencido' } : {}),
+      ...(client?.status === 'vencido' && dataFim >= today ? { status: 'ativo', whatsappNotificadoVencimentoAt: null } : {}),
+    },
+  })
+  return dataFim
+}
+
 /** Nº de meses (mín. 1) entre duas datas, arredondado. */
 export function mesesEntre(inicio: Date, fim: Date): number {
   const months =
@@ -158,6 +201,8 @@ export type RegistarPagamentoInput = {
   fim?: Date | null
   metodo?: string | null
   observacoes?: string | null
+  /** null/omisso = atraso calculado automaticamente; true/false = marcado pelo gestor. */
+  atrasoManual?: boolean | null
   userId?: number | null
   origem?: 'painel' | 'inicial'
 }
@@ -190,8 +235,10 @@ export async function registarPagamentoCliente(input: RegistarPagamentoInput) {
   } else {
     const mesInicial = input.mesInicial ? inicioDoMes(input.mesInicial) : proximoMesAPagar(client.dataFim, today)
     const cobertura = calcularCobertura(mesInicial, meses)
+    await garantirMesesLivres(client.id, cobertura.periodos.map((p) => p.inicio))
     datas = cobertura.periodos
-    novoFim = cobertura.dataFim
+    // Pagar um mês antigo em falta não recua a data fim de quem já pagou meses posteriores.
+    novoFim = cobertura.dataFim > client.dataFim ? cobertura.dataFim : client.dataFim
   }
   const periodos = parcelas.map((valor, i) => ({
     clientId: client.id,
@@ -214,6 +261,7 @@ export async function registarPagamentoCliente(input: RegistarPagamentoInput) {
         metodo: input.metodo || null,
         observacoes: input.observacoes || null,
         origem: input.origem ?? 'painel',
+        atrasoManual: input.atrasoManual ?? null,
         userId: input.userId ?? null,
         periodos: { create: periodos },
       },
@@ -265,6 +313,79 @@ export async function removerPagamentoCliente(clientId: number, pagamentoId: num
   return pagamento
 }
 
+export type EditarPagamentoInput = {
+  dataPagamento?: Date | null
+  meses?: number | null
+  /** Primeiro mês coberto; mudar `meses` ou `mesInicial` refaz os períodos em meses de calendário. */
+  mesInicial?: Date | null
+  valorTotal?: number | null
+  metodo?: string | null
+  observacoes?: string | null
+  /** undefined = não mexe; null = volta ao automático; true/false = marcado pelo gestor. */
+  atrasoManual?: boolean | null
+}
+
+/** Corrige um pagamento (data em que pagou, meses cobertos, valor, atraso...) e recalcula a data fim do cliente. */
+export async function editarPagamentoCliente(clientId: number, pagamentoId: number, input: EditarPagamentoInput) {
+  await ensurePagamentosTables()
+  const atual = await prisma.pagamento.findFirst({
+    where: { id: pagamentoId, clientId },
+    include: { periodos: { orderBy: { numero: 'asc' } } },
+  })
+  if (!atual) return null
+
+  const mesAtual = atual.periodos.length ? mesCoberto(atual.periodos[0].inicio) : null
+  const meses = input.meses != null ? Math.min(24, Math.max(1, Math.round(Number(input.meses)))) : atual.meses
+  const mesInicial = input.mesInicial ? inicioDoMes(input.mesInicial) : mesAtual ?? inicioDoMes(atual.dataPagamento)
+  const valorTotal = input.valorTotal != null ? Number(input.valorTotal) : Number(atual.valorTotal)
+  const refazerPeriodos =
+    meses !== atual.meses || !mesAtual || mesInicial.getTime() !== mesAtual.getTime()
+  const parcelas = dividirValor(valorTotal, meses)
+  const today = startOfToday()
+
+  const ops = []
+  if (refazerPeriodos) {
+    const { periodos } = calcularCobertura(mesInicial, meses)
+    await garantirMesesLivres(clientId, periodos.map((p) => p.inicio), pagamentoId)
+    // Mantém o "cliente avisado" dos meses que continuam no pagamento.
+    const avisados = new Map(atual.periodos.map((p) => [chaveMes(mesCoberto(p.inicio)), p.notificadoAt]))
+    ops.push(
+      prisma.periodoPago.deleteMany({ where: { pagamentoId } }),
+      prisma.periodoPago.createMany({
+        data: periodos.map((p, i) => ({
+          pagamentoId,
+          clientId,
+          numero: i + 1,
+          inicio: p.inicio,
+          fim: p.fim,
+          valor: parcelas[i],
+          notificadoAt: avisados.get(chaveMes(p.inicio)) ?? (p.fim <= today ? new Date() : null),
+        })),
+      })
+    )
+  } else if (valorTotal !== Number(atual.valorTotal)) {
+    ops.push(
+      ...atual.periodos.map((p, i) => prisma.periodoPago.update({ where: { id: p.id }, data: { valor: parcelas[i] } }))
+    )
+  }
+  ops.push(
+    prisma.pagamento.update({
+      where: { id: pagamentoId },
+      data: {
+        meses,
+        valorTotal,
+        ...(input.dataPagamento ? { dataPagamento: input.dataPagamento } : {}),
+        ...(input.metodo !== undefined ? { metodo: input.metodo || null } : {}),
+        ...(input.observacoes !== undefined ? { observacoes: input.observacoes || null } : {}),
+        ...(input.atrasoManual !== undefined ? { atrasoManual: input.atrasoManual } : {}),
+      },
+    })
+  )
+  await prisma.$transaction(ops)
+  const dataFim = refazerPeriodos ? await sincronizarDataFim(clientId) : null
+  return { pagamento: atual, dataFim }
+}
+
 type PeriodoRow = { id: number; numero: number; inicio: Date; fim: Date; valor: unknown; notificadoAt: Date | null }
 type PagamentoRow = {
   id: number
@@ -276,6 +397,7 @@ type PagamentoRow = {
   metodo: string | null
   observacoes: string | null
   origem: string
+  atrasoManual?: boolean | null
   userId: number | null
   createdAt: Date
   periodos: PeriodoRow[]
@@ -291,8 +413,55 @@ export function serializePagamento(p: PagamentoRow, today = startOfToday()) {
   return {
     ...p,
     valorTotal: Number(p.valorTotal),
-    periodos: p.periodos.map((x) => ({ ...x, valor: Number(x.valor), estado: estadoPeriodo(x, today) })),
+    periodos: p.periodos.map((x) => ({
+      ...x,
+      valor: Number(x.valor),
+      estado: estadoPeriodo(x, today),
+      /** Mês de calendário coberto (dia 1). */
+      mes: mesCoberto(x.inicio),
+    })),
   }
+}
+
+const DIA_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Atraso automático: o prazo é o limite de renovação do pagamento anterior (dia 10 do mês a seguir
+ * ao último mês que ele cobriu). O primeiro pagamento do cliente nunca conta como atrasado.
+ * O gestor pode sobrepor com `atrasoManual`.
+ */
+function calcularAtrasos(pagamentos: ReturnType<typeof serializePagamento>[]) {
+  const comMeses = pagamentos.filter((p) => p.periodos.length > 0)
+  return new Map(
+    pagamentos.map((p) => {
+      let prazo: Date | null = null
+      if (p.periodos.length) {
+        const primeiroMes = p.periodos[0].mes.getTime()
+        // Pagamento anterior = o que cobre o mês mais recente antes do primeiro mês deste.
+        let anteriorFim: Date | null = null
+        for (const o of comMeses) {
+          if (o.id === p.id) continue
+          const ultimo = o.periodos[o.periodos.length - 1]
+          if (ultimo.mes.getTime() < primeiroMes && (anteriorFim == null || ultimo.fim > anteriorFim)) anteriorFim = ultimo.fim
+        }
+        prazo = anteriorFim ? dataFimDoPeriodo(anteriorFim) : null
+      }
+      const dia = new Date(p.dataPagamento)
+      dia.setHours(0, 0, 0, 0)
+      const diasAtraso = prazo && dia > prazo ? Math.round((dia.getTime() - prazo.getTime()) / DIA_MS) : 0
+      const atrasoAuto = diasAtraso > 0
+      return [
+        p.id,
+        {
+          prazo,
+          diasAtraso,
+          atrasoAuto,
+          atraso: p.atrasoManual ?? atrasoAuto,
+          atrasoManual: p.atrasoManual ?? null,
+        },
+      ] as const
+    })
+  )
 }
 
 export async function listarPagamentosCliente(clientId: number) {
@@ -304,12 +473,15 @@ export async function listarPagamentosCliente(clientId: number) {
   })
   const today = startOfToday()
   const client = await prisma.client.findUnique({ where: { id: clientId }, select: { dataFim: true } })
-  const pagamentos = rows.map((p) => serializePagamento(p, today))
+  const serializados = rows.map((p) => serializePagamento(p, today))
+  const atrasos = calcularAtrasos(serializados)
+  const pagamentos = serializados.map((p) => ({ ...p, ...atrasos.get(p.id)! }))
   const periodos = pagamentos.flatMap((p) => p.periodos)
   return {
     pagamentos,
     resumo: {
       totalPago: pagamentos.reduce((s, p) => s + p.valorTotal, 0),
+      pagamentosEmAtraso: pagamentos.filter((p) => p.atraso).length,
       mesesPagos: periodos.length,
       mesesExpirados: periodos.filter((x) => x.estado === 'expirado').length,
       mesesRestantes: periodos.filter((x) => x.estado !== 'expirado').length,

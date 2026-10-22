@@ -871,7 +871,7 @@ export default function Clientes() {
       {clientPagamentos && (
         <PagamentosClienteModal
           client={clientPagamentos}
-          canDelete={role === 'admin' || role === 'financeiro'}
+          canManage={role === 'admin' || role === 'financeiro'}
           onClose={() => setClientPagamentos(null)}
           onChanged={() => load()}
         />
