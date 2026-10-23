@@ -22,6 +22,7 @@ import { MAX_CLIENTES_POR_SALA, lugaresOcupados } from '../lib/salasConfig.js'
 import {
   addMonthsKeepingBillingDay,
   calcularCobertura,
+  editarPagamentoCliente,
   limiteRenovacaoDoMes,
   startOfToday,
   listarPagamentosCliente,
@@ -477,9 +478,26 @@ router.patch('/:id', auditLog('update_client', 'client'), async (req, res) => {
   })
 })
 
+/** `atrasoManual` do body: undefined = não enviado; 'auto'/null = automático; true/false = marcado pelo gestor. */
+function parseAtrasoManual(v: unknown): boolean | null | undefined {
+  if (v === undefined) return undefined
+  if (v === true || v === 'true' || v === 'sim') return true
+  if (v === false || v === 'false' || v === 'nao') return false
+  return null
+}
+
+/** Erro `mes-ja-pago:AAAA-MM` de pagamentos.ts → mensagem para o painel. */
+function mesJaPagoMensagem(e: unknown): string | null {
+  if (!(e instanceof Error) || !e.message.startsWith('mes-ja-pago:')) return null
+  const [ano, mes] = e.message.slice('mes-ja-pago:'.length).split('-').map(Number)
+  const nome = new Date(ano, mes - 1, 1).toLocaleDateString('pt-PT', { month: 'long', year: 'numeric' })
+  return `O mês de ${nome} já está pago noutro pagamento.`
+}
+
 /**
  * Regista um pagamento de N meses só para este cliente (cria Pagamento + 1 PeriodoPago por mês).
- * Body: meses, valorTotal? (por omissão valor mensal × meses), dataPagamento?, inicio?, metodo?, observacoes?
+ * Body: meses, valorTotal? (por omissão valor mensal × meses), dataPagamento?, mesInicial?, metodo?, observacoes?,
+ * atrasoManual? (omisso = automático)
  * `valor` (mensalidade) e `dias` mantêm-se por compatibilidade com o antigo /renovar.
  */
 async function registarPagamentoHandler(req: Request, res: Response) {
@@ -499,16 +517,25 @@ async function registarPagamentoHandler(req: Request, res: Response) {
   if (valorTotal != null && (Number.isNaN(valorTotal) || valorTotal < 0)) {
     return res.status(400).json({ error: 'Valor pago inválido.' })
   }
-  const { pagamento, dataFim } = await registarPagamentoCliente({
-    clientId: id,
-    meses,
-    valorTotal,
-    dataPagamento: optionalDate(body.dataPagamento),
-    mesInicial: optionalDate(body.mesInicial ?? body.inicio),
-    metodo: body.metodo ? String(body.metodo) : null,
-    observacoes: body.observacoes ? String(body.observacoes).trim() : null,
-    userId: user.userId,
-  })
+  let registo: Awaited<ReturnType<typeof registarPagamentoCliente>>
+  try {
+    registo = await registarPagamentoCliente({
+      clientId: id,
+      meses,
+      valorTotal,
+      dataPagamento: optionalDate(body.dataPagamento),
+      mesInicial: optionalDate(body.mesInicial ?? body.inicio),
+      metodo: body.metodo ? String(body.metodo) : null,
+      observacoes: body.observacoes ? String(body.observacoes).trim() : null,
+      atrasoManual: parseAtrasoManual(body.atrasoManual) ?? null,
+      userId: user.userId,
+    })
+  } catch (e) {
+    const msg = mesJaPagoMensagem(e)
+    if (msg) return res.status(400).json({ error: msg })
+    throw e
+  }
+  const { pagamento, dataFim } = registo
   const updated = await prisma.client.findUnique({ where: { id }, include: { sala: true } })
   if (!updated) return res.status(404).json({ error: 'Cliente não encontrado' })
   void sendWhatsAppMessage(
@@ -540,6 +567,40 @@ router.get('/:id/pagamentos', async (req, res) => {
   const client = await prisma.client.findUnique({ where: { id }, select: { id: true, servico: true } })
   if (!client) return res.status(404).json({ error: 'Cliente não encontrado' })
   if (!canAccessServico(user.role, client.servico)) return res.status(403).json({ error: 'Sem acesso a este cliente' })
+  res.json(await listarPagamentosCliente(id))
+})
+
+/** Corrige um pagamento: data em que pagou, meses cobertos (mesInicial + meses), valor, método, atraso. */
+router.patch('/:id/pagamentos/:pagamentoId', auditLog('update_client_payment', 'client'), async (req, res) => {
+  const user = (req as unknown as { user: AuthPayload }).user
+  if (!canAccessFinanceiro(user.role)) {
+    return res.status(403).json({ error: 'Só administradores ou financeiro podem editar pagamentos' })
+  }
+  const id = Number(req.params.id)
+  const body = req.body ?? {}
+  if (body.meses != null && (Number(body.meses) < 1 || Number(body.meses) > 24)) {
+    return res.status(400).json({ error: 'Meses inválidos (1 a 24).' })
+  }
+  const valorTotal = body.valorTotal != null && body.valorTotal !== '' ? Number(body.valorTotal) : null
+  if (valorTotal != null && (Number.isNaN(valorTotal) || valorTotal < 0)) {
+    return res.status(400).json({ error: 'Valor pago inválido.' })
+  }
+  try {
+    const r = await editarPagamentoCliente(id, Number(req.params.pagamentoId), {
+      dataPagamento: optionalDate(body.dataPagamento),
+      meses: body.meses != null ? Number(body.meses) : null,
+      mesInicial: optionalDate(body.mesInicial),
+      valorTotal,
+      metodo: body.metodo !== undefined ? (body.metodo ? String(body.metodo) : null) : undefined,
+      observacoes: body.observacoes !== undefined ? (body.observacoes ? String(body.observacoes).trim() : null) : undefined,
+      atrasoManual: parseAtrasoManual(body.atrasoManual),
+    })
+    if (!r) return res.status(404).json({ error: 'Pagamento não encontrado' })
+  } catch (e) {
+    const msg = mesJaPagoMensagem(e)
+    if (msg) return res.status(400).json({ error: msg })
+    throw e
+  }
   res.json(await listarPagamentosCliente(id))
 })
 

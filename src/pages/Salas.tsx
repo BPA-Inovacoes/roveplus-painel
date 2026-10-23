@@ -634,7 +634,7 @@ export default function Salas() {
       )}
 
       {salaDetalhesId != null && (
-        <SalaDetalhesModal salaId={salaDetalhesId} onClose={() => setSalaDetalhesId(null)} />
+        <SalaDetalhesModal salaId={salaDetalhesId} onClose={() => setSalaDetalhesId(null)} onChanged={load} />
       )}
 
       {/* Modal confirmar suspender sala */}

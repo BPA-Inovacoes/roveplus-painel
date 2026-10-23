@@ -79,6 +79,7 @@ model Pagamento {
   metodo        String? // multicaixa | transferencia | dinheiro | outro
   observacoes   String?
   origem        String   @default("painel") // painel | inicial (migração/registo do cliente)
+  atrasoManual  Boolean? @map("atraso_manual") // null = atraso automático (pagamento anterior); true/false = marcado pelo gestor
   userId        Int?     @map("user_id") // utilizador do painel que registou
   createdAt     DateTime @default(now())
 
